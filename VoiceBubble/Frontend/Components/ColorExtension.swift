@@ -30,26 +30,78 @@ extension Color {
     }
 }
 
-// MARK: - Glassmorphism Card Modifier
+// MARK: - Card Modifier
 
 extension View {
-    /// Applies a frosted glass card style matching Voice Aura's glassmorphism design.
-    func glassCard(cornerRadius: CGFloat = 14, borderColor: Color? = nil) -> some View {
-        self
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(.regularMaterial)
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(Color.white.opacity(0.55))
-                }
+    /// Glass / paper / Material card surface. Pass `cornerRadius` to override
+    /// the theme's default radius; pass `borderColor` to override the theme
+    /// border. Material, border width and shadow profile are always pulled
+    /// from the active `ThemeManager` so each theme has a distinct surface
+    /// personality (Apple thin frost, Claude paper, Material elevation, etc.).
+    func glassCard(cornerRadius: CGFloat? = nil, borderColor: Color? = nil) -> some View {
+        modifier(GlassCardModifier(cornerRadius: cornerRadius, borderColor: borderColor))
+    }
+}
+
+private struct GlassCardModifier: ViewModifier {
+    @EnvironmentObject private var theme: ThemeManager
+    let cornerRadius: CGFloat?
+    let borderColor: Color?
+
+    func body(content: Content) -> some View {
+        let r = cornerRadius ?? theme.cardBaseCornerRadius
+        // Drop-shadow profile is user-controlled, not theme-controlled.
+        // Lets you keep e.g. the minimalist Claude look but bump cards to
+        // "深" / "悬浮" if you prefer more separation between sections.
+        let depth = theme.cardDepth
+
+        // Border width is theme-defined, then scaled by cardDepth.borderScale.
+        // depth.bare zeroes the scale so the border disappears entirely
+        // even on themes whose default border width is non-zero.
+        let baseBorderWidth: CGFloat = (theme.decoration == .minimal) ? 0.5 : theme.cardBorderWidth
+        let effectiveBorderWidth = baseBorderWidth * CGFloat(depth.borderScale)
+
+        switch theme.decoration {
+        case .minimal:
+            return AnyView(
+                content
+                    .background(
+                        RoundedRectangle(cornerRadius: r, style: .continuous)
+                            .fill(theme.cardOverlayColor.opacity(0.6))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: r, style: .continuous)
+                            .stroke(borderColor ?? theme.border.opacity(0.5),
+                                    lineWidth: effectiveBorderWidth)
+                    )
+                    .shadow(color: Color.black.opacity(depth.shadowOpacity),
+                            radius: depth.shadowRadius,
+                            x: 0,
+                            y: max(depth.shadowRadius / 3, 0))
             )
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(borderColor ?? Color.white.opacity(0.65), lineWidth: 1)
+
+        case .material, .expressive:
+            return AnyView(
+                content
+                    .background(
+                        ZStack {
+                            RoundedRectangle(cornerRadius: r, style: .continuous)
+                                .fill(theme.cardMaterial)
+                            RoundedRectangle(cornerRadius: r, style: .continuous)
+                                .fill(theme.cardOverlayColor.opacity(theme.cardFillOpacity))
+                        }
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: r, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: r, style: .continuous)
+                            .stroke(borderColor ?? theme.cardBorderColor,
+                                    lineWidth: effectiveBorderWidth)
+                    )
+                    .shadow(color: Color.black.opacity(depth.shadowOpacity),
+                            radius: depth.shadowRadius,
+                            x: 0,
+                            y: max(depth.shadowRadius / 3, 0))
             )
-            .shadow(color: Color.black.opacity(0.02), radius: 1, x: 0, y: 1)
-            .shadow(color: Color.black.opacity(0.03), radius: 4, x: 0, y: 2)
+        }
     }
 }

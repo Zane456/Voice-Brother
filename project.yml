@@ -38,15 +38,18 @@ targets:
         INFOPLIST_FILE: VoiceBubble/Info.plist
         CODE_SIGN_ENTITLEMENTS: VoiceBubble/VoiceBubble.entitlements
         SWIFT_STRICT_CONCURRENCY: minimal
-        OTHER_LDFLAGS: ["-framework", "ScreenCaptureKit"]
+        OTHER_LDFLAGS: ["-framework", "ScreenCaptureKit", "-framework", "Speech"]
     dependencies:
       - package: speech-swift
         product: Qwen3ASR
+      - package: speech-swift
+        product: Qwen3Chat
       - package: speech-swift
         product: SpeechVAD
       - package: speech-swift
         product: AudioCommon
       - sdk: ScreenCaptureKit.framework
+      - sdk: Speech.framework
     entitlements:
       path: VoiceBubble/VoiceBubble.entitlements
       properties:
@@ -63,4 +66,5 @@ targets:
         LSMinimumSystemVersion: "14.0"
         NSMicrophoneUsageDescription: "Voice Bubble 需要麦克风权限来录制语音"
         NSScreenCaptureUsageDescription: "Voice Bubble 需要屏幕录制权限来采集系统音频（会议纪要功能）"
+        NSSpeechRecognitionUsageDescription: "Voice Bubble 需要语音识别权限来使用 Apple 内置语音识别"
         NSHumanReadableCopyright: "Copyright © 2026 Voice Bubble. All rights reserved."

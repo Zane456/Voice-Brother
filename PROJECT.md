@@ -572,25 +572,31 @@ VoiceBubble/
 │   └── Protocols.swift          ← 所有服务的协议接口
 │
 ├── Backend/                     ← 后端：实现协议
-│   ├── VoiceService.swift       ← 语音输入生命周期
-│   ├── MeetingService.swift     ← 会议纪要生命周期
-│   ├── KeyboardListener.swift   ← CGEventTap 键盘监听
-│   ├── ConfigManager.swift      ← 配置持久化
-│   ├── PermissionManager.swift  ← 权限检测与引导
-│   ├── TextInjector.swift       ← 剪贴板保护 + CGEvent 粘贴
-│   └── TextProcessor.swift      ← 语气词过滤 + 替换规则
+│   ├── Voice/                   ← 语音输入领域
+│   │   ├── VoiceService.swift       ← 语音输入生命周期
+│   │   ├── KeyboardListener.swift   ← CGEventTap 键盘监听
+│   │   ├── TextInjector.swift       ← 剪贴板保护 + CGEvent 粘贴
+│   │   └── TextProcessor.swift      ← 语气词过滤 + 替换规则
+│   ├── Meeting/                 ← 会议纪要领域
+│   │   └── MeetingService.swift     ← 会议纪要生命周期
+│   └── Services/                ← 跨领域基础服务
+│       ├── ConfigManager.swift      ← 配置持久化
+│       ├── PermissionManager.swift  ← 权限检测与引导
+│       └── HistoryManager.swift     ← 转写历史存储（SQLite actor）
 │
 ├── Frontend/                    ← 前端：SwiftUI 视图
 │   ├── MainWindow.swift         ← 左侧导航 + 右侧内容
 │   ├── Tabs/
 │   │   ├── GeneralTab.swift     ← 通用设置
 │   │   ├── VocabularyTab.swift  ← 热词 + 替换规则
+│   │   ├── HistoryTab.swift     ← 转写历史
 │   │   ├── MeetingTab.swift     ← 会议设置
 │   │   └── AboutTab.swift       ← 关于页
 │   ├── Components/
-│   │   ├── GlassmorphismBackground.swift  ← 动画背景
-│   │   ├── RecordingOverlayPanel.swift    ← 录音浮窗窗口（NSPanel，非纯 SwiftUI）
-│   │   └── RecordingWaveformView.swift    ← 波形动画（SwiftUI，嵌入 NSPanel）
+│   │   ├── ColorExtension.swift          ← 颜色扩展 + glassCard 修饰符
+│   │   ├── GlassmorphismBackground.swift ← 动画背景
+│   │   ├── RecordingOverlayPanel.swift   ← 录音浮窗窗口（NSPanel，非纯 SwiftUI）
+│   │   └── RecordingWaveformView.swift   ← 波形动画（SwiftUI，嵌入 NSPanel）
 │   └── OnboardingView.swift     ← 首次引导
 │
 └── VoiceBubbleApp.swift         ← 应用入口：创建后端实例，注入到前端

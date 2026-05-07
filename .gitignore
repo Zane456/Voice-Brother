@@ -50,3 +50,6 @@ skills-lock.json
 
 # Large assets
 logo2.png
+
+# Distribution builds (large binaries, ~1.8 GB)
+dist/

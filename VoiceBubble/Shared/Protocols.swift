@@ -19,6 +19,7 @@ protocol MeetingServiceProtocol: ObservableObject {
     var state: MeetingState { get }
     var elapsedSeconds: Int { get }
     var savePath: String { get set }
+    var summaryError: String? { get }
 
     func start()
     func stop()
@@ -36,7 +37,40 @@ protocol ConfigManagerProtocol: ObservableObject {
     var spaceReposition: Bool { get set }
     var meetingSavePath: String { get set }
     var preserveClipboard: Bool { get set }
+    var streamingPreview: Bool { get set }
+    var previewFontSize: Double { get set }
     var onboardingDone: Bool { get set }
+
+    // Model management
+    var asrProviderType: String { get set }
+    var cloudASRProvider: String { get set }
+    var cloudASRCredentials: [String: ProviderCredentials] { get set }
+    var llmProviderType: String { get set }
+    var polishModel: String { get set }
+    var llmProvider: String { get set }
+    var llmCredentials: [String: ProviderCredentials] { get set }
+    var localLLMNotes: String { get set }
+    var cloudLLMEnabled: Bool { get set }
+
+    // Meeting ASR — shares engine with voice input (configManager.model).
+    // No separate meeting ASR config; the meeting LLM (summary) is independent below.
+
+    // Meeting LLM
+    var meetingLLMProvider: String { get set }
+    var meetingLLMCredentials: [String: ProviderCredentials] { get set }
+    var meetingLLMEnabled: Bool { get set }
+    var meetingSummaryPrompt: String { get set }
+
+    // Self-learning
+    var selfLearningEnabled: Bool { get set }
+    var selfLearningThreshold: Int { get set }
+
+    // Prompt presets
+    var polishCustomPresets: [String: String] { get set }
+    var meetingCustomPresets: [String: String] { get set }
+
+    // Privacy
+    var privacyMode: Bool { get set }
 
     func save()
     func isFreshInstall() -> Bool
@@ -51,4 +85,16 @@ protocol PermissionManagerProtocol: ObservableObject {
     func openAccessibilitySettings()
     func openMicrophoneSettings()
     func openScreenRecordingSettings()
+}
+
+// MARK: - ASR Engine Protocol
+
+protocol ASREngineProtocol: AnyObject {
+    /// Returns transcribed text, or empty string on failure. Non-throwing — wrappers handle errors internally.
+    /// `language` is a hint for engines that support it (Qwen3-ASR, Volcano).
+    /// Pass `nil` for auto-detect: Qwen3-ASR drops the language token from its
+    /// prompt template, freeing the decoder across CJK/Latin scripts; Volcano
+    /// falls back to its server-side default.
+    func transcribe(audio: [Float], sampleRate: Int, language: String?, context: String?) -> String
+    func unload()
 }

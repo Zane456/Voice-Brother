@@ -16,14 +16,31 @@ final class KeyboardListener {
     private let onCancel: () -> Void
     private let onReposition: () -> Void
     private let onMeetingToggle: () -> Void
+    private let onEnterPress: () -> Void
 
     // MARK: - State
 
     private var triggerKey: CGKeyCode
     private var flagMask: CGEventFlags
+    /// Optional mouse button (3, 4, …) for mouse-side-button triggers. When set,
+    /// the listener watches `.otherMouseDown` / `.otherMouseUp` for this button
+    /// instead of (or in addition to) the keyboard trigger.
+    private var triggerMouseButton: Int?
     private var pressed = false
     private var spaceSwallowed = false
-    private var meetingActive = false
+    /// Written from MainActor (MeetingService), read from CGEventTap background
+    /// thread. Must be accessed via `isMeetingActive` to route through the lock.
+    private var _meetingActive = false
+    /// Set by VoiceService after text injection; cleared after Enter is detected.
+    /// Thread-safe: written from MainActor, read from CGEventTap background thread.
+    private var _feedbackPending = false
+    private let stateLock = NSLock()
+    private let feedbackLock = NSLock()
+    var feedbackPending: Bool {
+        get { feedbackLock.withLock { _feedbackPending } }
+        set { feedbackLock.withLock { _feedbackPending = newValue } }
+    }
+    private var enterPending = false
 
     // Both-Command hold detection (hold both Cmd keys for 0.5s to toggle meeting)
     private var cmdLPressed = false
@@ -31,9 +48,19 @@ final class KeyboardListener {
     private var bothCmdStartTime: TimeInterval = 0
     private var meetingTriggeredWhileHeld = false
 
-    // Delayed voice recording start (prevents conflict with meeting gesture)
+    // Delayed voice recording start (prevents conflict with double-Command meeting gesture).
+    // Only Cmd triggers can collide with the dual-Cmd gesture; Option/Control/Shift have
+    // no equivalent ambiguity, so they fire on the next run-loop tick (~25–50ms).
+    // Cmd_R/Cmd_L use 80ms — measurable real-world double-Cmd presses land within 30–60ms
+    // of each other, so 80ms still wins the intentional gesture while being snappier than
+    // the original 150ms. This 70ms savings matters most for Bluetooth (AirPods) where
+    // every millisecond before the SCO link starts warming = a millisecond of speech the
+    // user has to delay or risk losing.
     private var pressPendingTime: TimeInterval = 0
-    private let pressDelay: TimeInterval = 0.15
+    private var pressDelay: TimeInterval {
+        // Cmd_R = 0x36, Cmd_L = 0x37
+        return (triggerKey == 0x36 || triggerKey == 0x37) ? 0.08 : 0.0
+    }
 
     // Event signaling
     private var releasePending = false
@@ -52,19 +79,23 @@ final class KeyboardListener {
     init(
         triggerKey: CGKeyCode,
         flagMask: CGEventFlags,
+        triggerMouseButton: Int? = nil,
         onPress: @escaping () -> Void,
         onRelease: @escaping () -> Void,
         onCancel: @escaping () -> Void,
         onReposition: @escaping () -> Void,
-        onMeetingToggle: @escaping () -> Void
+        onMeetingToggle: @escaping () -> Void,
+        onEnterPress: @escaping () -> Void = {}
     ) {
         self.triggerKey = triggerKey
         self.flagMask = flagMask
+        self.triggerMouseButton = triggerMouseButton
         self.onPress = onPress
         self.onRelease = onRelease
         self.onCancel = onCancel
         self.onReposition = onReposition
         self.onMeetingToggle = onMeetingToggle
+        self.onEnterPress = onEnterPress
     }
 
     // MARK: - Public API
@@ -92,30 +123,55 @@ final class KeyboardListener {
 
     func stop() {
         stopped = true
+        // Reset transient press state so a stop()-then-start() (e.g. user
+        // changes trigger key while holding a mouse side button or modifier)
+        // doesn't leave us with `pressed = true` baked in. Without this, the
+        // next genuine button-down would be a no-op (we treat it as "already
+        // pressed") and the user has to release+press twice to recover.
+        pressed = false
+        spaceSwallowed = false
+        pressPendingTime = 0
+        cmdLPressed = false
+        cmdRPressed = false
+        bothCmdStartTime = 0
+        meetingTriggeredWhileHeld = false
+        releasePending = false
+        cancelPending = false
+        meetingTogglePending = false
+        enterPending = false
         if let runLoop = runLoop {
             CFRunLoopStop(runLoop)
         }
         listenerThread = nil
     }
 
-    func updateTriggerKey(_ keyCode: CGKeyCode, flagMask: CGEventFlags) {
+    func updateTriggerKey(_ keyCode: CGKeyCode, flagMask: CGEventFlags, mouseButton: Int? = nil) {
         self.triggerKey = keyCode
         self.flagMask = flagMask
+        self.triggerMouseButton = mouseButton
     }
 
     /// When true, single-key press/release callbacks are suppressed.
+    /// Crosses the MainActor ↔ CGEventTap thread boundary, so serialize via lock.
     var isMeetingActive: Bool {
-        get { meetingActive }
-        set { meetingActive = newValue }
+        get { stateLock.withLock { _meetingActive } }
+        set { stateLock.withLock { _meetingActive = newValue } }
     }
 
     // MARK: - Run Loop (background thread)
 
     private func runEventListener() {
+        // Always include mouse events — the user may switch to a mouse-button
+        // trigger at runtime via `updateTriggerKey`, and re-creating the tap
+        // would require tearing down the run loop. Cost of extra events is
+        // negligible since handleEvent fast-paths anything that isn't our
+        // configured button.
         let eventMask: CGEventMask =
             (1 << CGEventType.flagsChanged.rawValue)
             | (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.keyUp.rawValue)
+            | (1 << CGEventType.otherMouseDown.rawValue)
+            | (1 << CGEventType.otherMouseUp.rawValue)
 
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -193,6 +249,14 @@ final class KeyboardListener {
                     callback()
                 }
             }
+
+            if enterPending {
+                enterPending = false
+                let callback = onEnterPress
+                DispatchQueue.global(qos: .userInitiated).async {
+                    callback()
+                }
+            }
         }
 
         // Cleanup
@@ -223,6 +287,51 @@ final class KeyboardListener {
             return Unmanaged.passRetained(event)
         }
 
+        // Mouse-side-button trigger. Mouse buttons give us explicit down/up events
+        // (no flagsChanged-style ambiguity), so we don't need the 80ms dual-Cmd
+        // delay — fire press/release immediately. We swallow the event when it
+        // matches our configured button so the system's default back/forward
+        // navigation doesn't double-fire while the user is recording.
+        if eventType == .otherMouseDown || eventType == .otherMouseUp {
+            guard let myButton = triggerMouseButton, !isMeetingActive else {
+                return Unmanaged.passRetained(event)
+            }
+            let buttonNumber = Int(event.getIntegerValueField(.mouseEventButtonNumber))
+            guard buttonNumber == myButton else {
+                return Unmanaged.passRetained(event)
+            }
+            // Disruptive modifier guard: if the user is holding any modifier
+            // (Cmd/Shift/Option/Control) when they click the side button,
+            // they're probably triggering an OS-level shortcut (Cmd+back-button
+            // is a common power-user gesture), not voice input. Mirror the
+            // keyboard-trigger UX: don't start, and cancel any in-flight
+            // recording. We let the event through so the OS shortcut still works.
+            let mouseModifiers: CGEventFlags = [.maskShift, .maskAlternate, .maskControl, .maskCommand]
+            let hasModifier = !event.flags.intersection(mouseModifiers).isEmpty
+            if hasModifier {
+                if pressed {
+                    pressed = false
+                    cancelPending = true
+                }
+                return Unmanaged.passRetained(event)
+            }
+            if eventType == .otherMouseDown {
+                if !pressed {
+                    pressed = true
+                    let callback = onPress
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        callback()
+                    }
+                }
+            } else {  // .otherMouseUp
+                if pressed {
+                    pressed = false
+                    releasePending = true
+                }
+            }
+            return nil  // swallow so back/forward navigation doesn't fire
+        }
+
         let keycode = event.getIntegerValueField(.keyboardEventKeycode)
 
         // ESC key cancels recording
@@ -236,11 +345,20 @@ final class KeyboardListener {
             return Unmanaged.passRetained(event)
         }
 
+        // Enter key detection for self-learning feedback
+        if eventType == .keyDown && (keycode == 0x24 || keycode == 0x4C) { // Return or numpad Enter
+            if feedbackPending {
+                feedbackPending = false
+                enterPending = true
+            }
+            return Unmanaged.passRetained(event) // never swallow Enter
+        }
+
         // Space key handling during recording
         if eventType == .keyDown || eventType == .keyUp {
             if pressed && keycode == 0x31 { // space
                 if eventType == .keyDown {
-                    if meetingActive {
+                    if isMeetingActive {
                         return Unmanaged.passRetained(event)
                     }
                     onReposition()
@@ -256,6 +374,52 @@ final class KeyboardListener {
 
         // Modifier key state changes (flagsChanged)
         let flags = event.flags
+
+        // Detect any *disruptive* modifier held right now — i.e. a modifier that
+        // isn't itself the user's configured trigger. If the user picks ⌘ as
+        // the trigger, Shift/Option/Control are disruptive; if they pick ⌥,
+        // only Shift/Control are. Without this subtraction, picking Option as
+        // the trigger would instantly cancel itself because maskAlternate
+        // matches the "other modifier" set.
+        var disruptiveMask: CGEventFlags = [.maskShift, .maskAlternate, .maskControl, .maskCommand]
+        disruptiveMask.subtract(flagMask)
+        let hasOtherModifier = !flags.intersection(disruptiveMask).isEmpty
+
+        // If a non-Command modifier just appeared during a pending / active
+        // recording, tear it down immediately. Covers: user presses ⌘ first,
+        // then ⇧4 a beat later.
+        if hasOtherModifier {
+            if pressPendingTime > 0 {
+                pressPendingTime = 0
+            }
+            if pressed {
+                pressed = false
+                cancelPending = true
+            }
+        }
+
+        // Non-Command modifier trigger (Shift 0x38/0x3C, Option 0x3A/0x3D, Control 0x3B/0x3E).
+        // Only the keycode chosen by the user in settings is treated as a trigger —
+        // e.g. selecting "Left Option" will NOT fire on Right Option. We still rely
+        // on the modifier flag bit to tell press from release, since flagsChanged
+        // doesn't carry an explicit up/down marker.
+        let isNonCmdModifierKeycode = (keycode == 0x38 || keycode == 0x3C   // shift L/R
+                                    || keycode == 0x3A || keycode == 0x3D   // option L/R
+                                    || keycode == 0x3B || keycode == 0x3E)  // control L/R
+        if isNonCmdModifierKeycode && Int64(triggerKey) == keycode && !isMeetingActive {
+            let isPressed = flags.contains(flagMask)
+            if isPressed && !pressed && pressPendingTime == 0 && !hasOtherModifier {
+                pressPendingTime = CACurrentMediaTime()
+            } else if !isPressed {
+                if pressPendingTime > 0 {
+                    pressPendingTime = 0
+                } else if pressed {
+                    pressed = false
+                    releasePending = true
+                }
+            }
+            return Unmanaged.passRetained(event)
+        }
 
         if keycode == 0x36 || keycode == 0x37 { // cmd_r or cmd_l
             // Use device-specific flags to distinguish left vs right Command.
@@ -285,7 +449,7 @@ final class KeyboardListener {
             }
 
             // Meeting active → suppress single-key events (but dual-command detection above still runs)
-            if meetingActive {
+            if isMeetingActive {
                 return Unmanaged.passRetained(event)
             }
 
@@ -299,8 +463,9 @@ final class KeyboardListener {
                     isPressed = flags.rawValue & 0x08 != 0  // left Command
                 }
 
-                if isPressed && !pressed && pressPendingTime == 0 {
+                if isPressed && !pressed && pressPendingTime == 0 && !hasOtherModifier {
                     // Don't start recording immediately — delay to distinguish from meeting gesture
+                    // and from modifier-heavy shortcuts like ⌘⇧4.
                     pressPendingTime = CACurrentMediaTime()
                 } else if !isPressed {
                     if pressPendingTime > 0 {

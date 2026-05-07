@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - Physics Bubble Model
@@ -9,7 +10,7 @@ private class PhysicsBubble: Identifiable {
     var vx: CGFloat
     var vy: CGFloat
     let radius: CGFloat
-    let color: Color
+    var color: Color
     let phase: CGFloat  // for breathing animation offset
 
     init(x: CGFloat, y: CGFloat, vx: CGFloat, vy: CGFloat,
@@ -27,20 +28,16 @@ private class PhysicsBubble: Identifiable {
 // MARK: - GlassmorphismBackground
 
 struct GlassmorphismBackground: View {
+    @EnvironmentObject private var theme: ThemeManager
+
     @State private var bubbles: [PhysicsBubble] = []
     @State private var lastUpdate: Date = .now
     @State private var elapsed: Double = 0
-
-    private static let bubbleColors: [Color] = [
-        Color(red8: 160, green8: 190, blue8: 255),   // soft blue
-        Color(red8: 190, green8: 170, blue8: 255),   // soft purple
-        Color(red8: 150, green8: 220, blue8: 230),   // soft cyan
-        Color(red8: 255, green8: 180, blue8: 210),   // soft pink
-        Color(red8: 170, green8: 210, blue8: 255),   // sky blue
-        Color(red8: 200, green8: 180, blue8: 255),   // lavender
-        Color(red8: 160, green8: 230, blue8: 220),   // soft teal
-        Color(red8: 255, green8: 195, blue8: 220),   // rose
-    ]
+    @State private var lastTheme: AppTheme?
+    /// Tracks whether *any* app window is currently visible. When false, we
+    /// pause the TimelineView so the 60–120Hz physics tick stops eating CPU
+    /// while the user has the menu-bar app running with no window on screen.
+    @State private var isWindowVisible: Bool = true
 
     // Physics constants
     private static let damping: CGFloat = 0.97
@@ -53,11 +50,17 @@ struct GlassmorphismBackground: View {
         GeometryReader { geometry in
             let size = geometry.size
 
-            TimelineView(.animation) { timeline in
+            TimelineView(.animation(paused: !isWindowVisible)) { timeline in
                 let now = timeline.date
                 Canvas { context, canvasSize in
                     drawBackground(context: context, size: canvasSize)
-                    drawBubbles(context: context, size: canvasSize)
+                    // Skip floating bubbles for minimal-decoration themes
+                    // (Claude/Apple/OpenAI vibe). Those products keep the
+                    // canvas quiet — drawing 8 colourful orbs over them
+                    // would immediately undo the "clean" look.
+                    if theme.decoration != .minimal {
+                        drawBubbles(context: context, size: canvasSize)
+                    }
                 } symbols: {
                     // No symbols needed
                 }
@@ -70,6 +73,31 @@ struct GlassmorphismBackground: View {
             }
             .onAppear {
                 initBubbles(in: size)
+                lastTheme = theme.current
+            }
+            .onChange(of: theme.current) { newTheme in
+                // Re-color bubbles when theme changes
+                let colors = theme.bubbleColors
+                for (i, bubble) in bubbles.enumerated() {
+                    bubble.color = colors[i % colors.count]
+                }
+                lastTheme = newTheme
+            }
+            // Pause physics when the main window is closed/hidden. For a
+            // menu-bar app this is the common idle state — keeping a 60Hz
+            // tick alive in the background just to update invisible bubbles
+            // wastes CPU/GPU.
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+                isWindowVisible = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { _ in
+                isWindowVisible = NSApp.windows.contains { $0.isVisible && $0.canBecomeKey }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { _ in
+                isWindowVisible = false
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { _ in
+                isWindowVisible = true
             }
         }
     }
@@ -79,6 +107,7 @@ struct GlassmorphismBackground: View {
     private func initBubbles(in size: CGSize) {
         guard bubbles.isEmpty else { return }
         var rng = SeededRandomGenerator(seed: 42)
+        let colors = theme.bubbleColors
 
         bubbles = (0..<8).map { i in
             let radius = CGFloat(45 + rng.next(in: 0..<55))
@@ -88,7 +117,7 @@ struct GlassmorphismBackground: View {
                 vx: CGFloat(rng.next(in: -12..<12)),
                 vy: CGFloat(rng.next(in: -12..<12)),
                 radius: radius,
-                color: Self.bubbleColors[i],
+                color: colors[i % colors.count],
                 phase: CGFloat(i) * 0.8
             )
         }
@@ -175,13 +204,7 @@ struct GlassmorphismBackground: View {
 
     private func drawBackground(context: GraphicsContext, size: CGSize) {
         // Soft gradient base
-        let gradient = Gradient(colors: [
-            Color(hex: "E8F4FD"),
-            Color(hex: "D6ECFA"),
-            Color(hex: "E0DFF0"),
-            Color(hex: "D8EAF5"),
-            Color(hex: "E5F0F8"),
-        ])
+        let gradient = Gradient(colors: theme.bgGradientColors)
         context.fill(
             Path(CGRect(origin: .zero, size: size)),
             with: .linearGradient(
@@ -204,7 +227,7 @@ struct GlassmorphismBackground: View {
 
             // Soft outer glow
             var glowCtx = context
-            glowCtx.opacity = 0.12
+            glowCtx.opacity = theme.bubbleGlowOpacity
             glowCtx.addFilter(.blur(radius: r * 0.8))
             let glowRect = CGRect(
                 x: center.x - r * 1.4,
@@ -228,8 +251,8 @@ struct GlassmorphismBackground: View {
                 Path(ellipseIn: coreRect),
                 with: .radialGradient(
                     Gradient(colors: [
-                        bubble.color.opacity(0.35),
-                        bubble.color.opacity(0.12),
+                        bubble.color.opacity(theme.bubbleCoreOpacity),
+                        bubble.color.opacity(theme.bubbleGlowOpacity),
                     ]),
                     center: center,
                     startRadius: 0,
@@ -245,7 +268,7 @@ struct GlassmorphismBackground: View {
                 height: r * 0.4
             )
             var highlightCtx = context
-            highlightCtx.opacity = 0.55
+            highlightCtx.opacity = theme.bubbleHighlightOpacity
             highlightCtx.fill(
                 Path(ellipseIn: highlightRect),
                 with: .color(.white)
@@ -253,7 +276,7 @@ struct GlassmorphismBackground: View {
 
             // Border ring — soap bubble edge
             var ringCtx = context
-            ringCtx.opacity = 0.3
+            ringCtx.opacity = theme.bubbleRingOpacity
             ringCtx.stroke(
                 Path(ellipseIn: coreRect),
                 with: .color(.white),

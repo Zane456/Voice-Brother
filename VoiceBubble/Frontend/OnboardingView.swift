@@ -3,6 +3,7 @@ import SwiftUI
 struct OnboardingView: View {
     @EnvironmentObject private var configManager: ConfigManager
     @EnvironmentObject private var permissionManager: PermissionManager
+    @EnvironmentObject private var theme: ThemeManager
 
     @Binding var isPresented: Bool
     @State private var currentStep = 0
@@ -12,62 +13,129 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // MARK: - Header
-            header
+            // Header
+            VStack(spacing: 10) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .padding(.top, 32)
 
-            // MARK: - Step Content
-            VStack(spacing: 16) {
-                stepView(
-                    step: 0,
-                    icon: "universalaccess",
-                    title: "第 1 步：辅助功能权限",
-                    description: "Voice Bubble 需要辅助功能权限来监听全局按键事件。\n\n点击下方按钮，在弹出的系统对话框中勾选 Voice Bubble。",
-                    granted: permissionManager.status.accessibility,
-                    isCurrent: currentStep == 0,
-                    action: { permissionManager.openAccessibilitySettings() }
-                )
+                Text("欢迎使用 Voice Bubble")
+                    .font(.system(size: 20, weight: .bold))
 
-                stepView(
-                    step: 1,
-                    icon: "mic",
-                    title: "第 2 步：麦克风权限",
-                    description: "需要麦克风权限来录制您的语音并进行文字识别。\n\n点击下方按钮，在弹出的对话框中选择「好」。",
-                    granted: permissionManager.status.microphone,
-                    isCurrent: currentStep == 1,
-                    action: { permissionManager.openMicrophoneSettings() }
-                )
+                Text("首次使用需要授予以下权限")
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.textSecondary)
+            }
 
-                stepView(
-                    step: 2,
-                    icon: "rectangle.on.rectangle.angled",
-                    title: "第 3 步：屏幕录制权限",
-                    description: "需要屏幕录制权限来获取系统音频（会议纪要功能）和输入焦点位置。\n\n点击下方按钮，在弹出的对话框中选择「打开系统设置」。",
-                    granted: permissionManager.status.screenRecording,
-                    isCurrent: currentStep == 2,
-                    action: { permissionManager.openScreenRecordingSettings() }
-                )
+            // Defaults & privacy card
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "lock.shield.fill")
+                        .foregroundColor(theme.accent)
+                    Text("默认全部本地处理")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                Text("语音识别使用本地 Qwen3-ASR 模型（首次启动约需下载 400MB）。转写历史、学习数据都保存在你的 Mac 上，不上传任何服务器。")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Divider().padding(.vertical, 2)
+
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .foregroundColor(theme.accent)
+                    Text("AI 云端润色 / 会议摘要（可选）")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                Text("如需更强的文本润色或会议摘要，可在「语音 → AI 大模型」或「会议 → 摘要」中填入你自己的 API Key（推荐 OpenRouter，一个 key 通用多家模型）。API Key 保存在系统 Keychain，不会随应用分发。")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(theme.accent.opacity(0.08)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10).stroke(theme.accent.opacity(0.25), lineWidth: 1)
+            )
+            .padding(.horizontal, 32)
+            .padding(.top, 16)
+
+            // Steps
+            VStack(spacing: 8) {
+                stepCard(0, icon: "universalaccess", title: "辅助功能",
+                         desc: "监听全局按键事件。在系统对话框中勾选 Voice Bubble。",
+                         granted: permissionManager.status.accessibility,
+                         action: { permissionManager.openAccessibilitySettings() })
+
+                stepCard(1, icon: "mic", title: "麦克风",
+                         desc: "录制语音并进行文字识别。在对话框中选择「好」。",
+                         granted: permissionManager.status.microphone,
+                         action: { permissionManager.openMicrophoneSettings() })
+
+                stepCard(2, icon: "rectangle.on.rectangle.angled", title: "屏幕录制",
+                         desc: "获取系统音频和输入焦点位置。在对话框中选择「打开系统设置」。",
+                         granted: permissionManager.status.screenRecording,
+                         action: { permissionManager.openScreenRecordingSettings() })
             }
             .padding(.horizontal, 32)
-            .padding(.top, 20)
+            .padding(.top, 24)
 
             Spacer()
 
-            // MARK: - Progress & Footer
-            footer
+            // Footer
+            HStack(spacing: 6) {
+                ForEach(0..<totalSteps, id: \.self) { step in
+                    Circle()
+                        .fill(stepIndicatorColor(step))
+                        .frame(width: 7, height: 7)
+                }
+            }
+            .padding(.bottom, 12)
+
+            Button {
+                if permissionManager.needsRelaunch {
+                    permissionManager.relaunchApp()
+                } else {
+                    configManager.onboardingDone = true
+                    isPresented = false
+                }
+            } label: {
+                let isPrimary = permissionManager.status.allGranted || permissionManager.needsRelaunch
+                Text(primaryButtonLabel)
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(isPrimary ? theme.accent : Color.clear)
+                    )
+                    .overlay(
+                        // Secondary-style border makes the "skip" button read
+                        // as clickable rather than disabled-gray.
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(isPrimary ? Color.clear : theme.accent.opacity(0.6), lineWidth: 1)
+                    )
+                    .foregroundColor(isPrimary ? .white : theme.accent)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 32)
+            .padding(.bottom, 24)
         }
-        .frame(width: 520, height: 580)
-        .background(Color(hex: "F2F6FC"))
+        .frame(width: 480, height: 600)
+        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             permissionManager.recheckAll()
             startRefreshTimer()
-
-            // If all permissions already granted, auto-dismiss
             if permissionManager.status.allGranted {
                 configManager.onboardingDone = true
                 isPresented = false
                 return
             }
-
             updateCurrentStep()
         }
         .onDisappear {
@@ -76,10 +144,11 @@ struct OnboardingView: View {
         }
         .onChange(of: permissionManager.status) { newStatus in
             updateCurrentStep()
-
-            // All permissions granted → auto dismiss after a brief moment
-            if newStatus.allGranted {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            // Keep the sheet open if the user still needs to relaunch —
+            // auto-dismissing here would drop them onto the main window
+            // where Screen Recording silently doesn't work yet.
+            if newStatus.allGranted && !permissionManager.needsRelaunch {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     configManager.onboardingDone = true
                     isPresented = false
                 }
@@ -87,208 +156,72 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: - Header
+    private func stepCard(_ step: Int, icon: String, title: String, desc: String,
+                          granted: Bool, action: @escaping () -> Void) -> some View {
+        let isCurrent = currentStep == step
 
-    private var header: some View {
-        VStack(spacing: 8) {
+        return HStack(spacing: 14) {
+            // Icon circle
             ZStack {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color(hex: "7B8CF5"), Color(hex: "4ECDC4")],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 56, height: 56)
+                Circle()
+                    .fill(granted ? theme.accent.opacity(0.12) : theme.surfaceBackground)
+                    .frame(width: 40, height: 40)
 
-                Image(systemName: "bubble.left.and.bubble.right.fill")
-                    .font(.system(size: 26))
-                    .foregroundColor(.white)
-            }
-            .padding(.top, 28)
-
-            Text("欢迎使用 Voice Bubble")
-                .font(.system(size: 20, weight: .bold))
-                .foregroundColor(Color(hex: "2C3E6B"))
-
-            Text("首次使用需要授予以下权限，请按顺序完成设置")
-                .font(.system(size: 13))
-                .foregroundColor(Color(hex: "5A7098"))
-        }
-    }
-
-    // MARK: - Step View
-
-    private func stepView(
-        step: Int,
-        icon: String,
-        title: String,
-        description: String,
-        granted: Bool,
-        isCurrent: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            // Step indicator
-            ZStack {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(
-                        granted ? Color(hex: "4ECDC4").opacity(0.15) :
-                        isCurrent ? Color(hex: "7B8CF5").opacity(0.1) :
-                        Color(hex: "F2F6FC")
-                    )
-                    .frame(width: 44, height: 44)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                granted ? Color(hex: "4ECDC4").opacity(0.3) :
-                                isCurrent ? Color(hex: "7B8CF5").opacity(0.5) :
-                                Color(hex: "C8D8EA"),
-                                lineWidth: isCurrent ? 2 : 1
-                            )
-                    )
-
-                if granted {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 22))
-                        .foregroundColor(Color(hex: "4ECDC4"))
-                } else {
-                    Text("\(step + 1)")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(isCurrent ? Color(hex: "7B8CF5") : Color(hex: "8AA0BE"))
-                }
+                Image(systemName: granted ? "checkmark" : icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(granted ? theme.accent : (isCurrent ? theme.accent : theme.textTertiary))
             }
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(
-                        granted ? Color(hex: "4ECDC4") :
-                        isCurrent ? Color(hex: "2C3E6B") :
-                        Color(hex: "8AA0BE")
-                    )
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(granted || isCurrent ? theme.textPrimary : theme.textTertiary)
 
                 if isCurrent || granted {
-                    Text(description)
+                    Text(desc)
                         .font(.system(size: 12))
-                        .foregroundColor(Color(hex: "5A7098"))
+                        .foregroundColor(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
             Spacer()
 
-            if !granted {
-                if isCurrent {
-                    Button {
-                        action()
-                    } label: {
-                        Text("授权")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color(hex: "7B8CF5"))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    Text("待完成")
-                        .font(.system(size: 11))
-                        .foregroundColor(Color(hex: "C8D8EA"))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
+            if !granted && isCurrent {
+                Button {
+                    action()
+                } label: {
+                    Text("授权")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.accent))
                 }
-            } else {
-                Text("已完成")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(Color(hex: "4ECDC4"))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                .buttonStyle(.plain)
             }
         }
-        .padding(16)
-        .background(Color.white)
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(
-                    granted ? Color(hex: "4ECDC4").opacity(0.3) :
-                    isCurrent ? Color(hex: "7B8CF5").opacity(0.4) :
-                    Color(hex: "C8D8EA"),
-                    lineWidth: isCurrent ? 2 : 1
-                )
-        )
-        .opacity(granted ? 0.7 : (isCurrent ? 1.0 : 0.5))
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
+        .opacity(granted ? 0.6 : (isCurrent ? 1.0 : 0.5))
     }
 
-    // MARK: - Footer
-
-    private var footer: some View {
-        VStack(spacing: 10) {
-            // Progress dots
-            HStack(spacing: 6) {
-                ForEach(0..<totalSteps, id: \.self) { step in
-                    Circle()
-                        .fill(
-                            permissionManager.status.allGranted ? Color(hex: "4ECDC4") :
-                            step <= currentStep ? Color(hex: "7B8CF5") :
-                            Color(hex: "C8D8EA")
-                        )
-                        .frame(width: 8, height: 8)
-                }
-            }
-
-            // Start button
-            Button {
-                configManager.onboardingDone = true
-                isPresented = false
-            } label: {
-                HStack(spacing: 6) {
-                    Text(permissionManager.status.allGranted ? "全部完成，开始使用" : "跳过，稍后设置")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(permissionManager.status.allGranted ? .white : Color(hex: "8AA0BE"))
-
-                    if permissionManager.status.allGranted {
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 12))
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 11)
-                        .fill(
-                            permissionManager.status.allGranted ? Color(hex: "7B8CF5") : Color.clear
-                        )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 11)
-                        .stroke(Color(hex: "C8D8EA"), lineWidth: permissionManager.status.allGranted ? 0 : 1)
-                )
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 32)
-        .padding(.bottom, 28)
+    private var primaryButtonLabel: String {
+        if permissionManager.needsRelaunch { return "立即重启以启用屏幕录制" }
+        if permissionManager.status.allGranted { return "开始使用" }
+        return "跳过，稍后设置"
     }
 
-    // MARK: - Helpers
+    private func stepIndicatorColor(_ step: Int) -> Color {
+        if permissionManager.status.allGranted { return theme.accent }
+        return step <= currentStep ? theme.accent : theme.border
+    }
 
     private func updateCurrentStep() {
         let s = permissionManager.status
-        if !s.accessibility {
-            currentStep = 0
-        } else if !s.microphone {
-            currentStep = 1
-        } else if !s.screenRecording {
-            currentStep = 2
-        } else {
-            currentStep = 2
-        }
+        if !s.accessibility { currentStep = 0 }
+        else if !s.microphone { currentStep = 1 }
+        else { currentStep = 2 }
     }
 
     private func startRefreshTimer() {

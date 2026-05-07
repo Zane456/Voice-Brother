@@ -3,12 +3,14 @@ import SQLite3
 
 extension Notification.Name {
     static let historyStoreDidChange = Notification.Name("VoiceBubble.historyStoreDidChange")
+    static let meetingFilesDidChange = Notification.Name("VoiceBubble.meetingFilesDidChange")
 }
 
 /// SQLite-backed store for voice transcription history. Thread-safe via actor isolation.
 actor HistoryStore {
 
     private var db: OpaquePointer?
+    private let iso = ISO8601DateFormatter()
 
     init() {
         let appSupport = FileManager.default.urls(
@@ -18,6 +20,9 @@ actor HistoryStore {
         let dbPath = appSupport.appendingPathComponent("history.db").path
 
         if sqlite3_open(dbPath, &db) == SQLITE_OK {
+            sqlite3_exec(db, "PRAGMA journal_mode=WAL;", nil, nil, nil)
+            sqlite3_exec(db, "PRAGMA synchronous=NORMAL;", nil, nil, nil)
+            sqlite3_exec(db, "PRAGMA busy_timeout=2000;", nil, nil, nil)
             let sql = """
             CREATE TABLE IF NOT EXISTS transcription_history (
                 id TEXT PRIMARY KEY,
@@ -26,13 +31,15 @@ actor HistoryStore {
                 text TEXT NOT NULL,
                 character_count INTEGER
             );
+            CREATE INDEX IF NOT EXISTS idx_created_at ON transcription_history(created_at DESC);
             """
             sqlite3_exec(db, sql, nil, nil, nil)
+            pruneOldRecords()
         }
     }
 
     deinit {
-        sqlite3_close(db)
+        sqlite3_close_v2(db)
     }
 
     // MARK: - CRUD
@@ -47,7 +54,6 @@ actor HistoryStore {
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(stmt) }
 
-        let iso = ISO8601DateFormatter()
         bind(stmt, 1, record.id.uuidString)
         bind(stmt, 2, iso.string(from: record.timestamp))
         sqlite3_bind_double(stmt, 3, record.duration)
@@ -70,7 +76,6 @@ actor HistoryStore {
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
 
-        let iso = ISO8601DateFormatter()
         var records: [TranscriptionRecord] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             records.append(TranscriptionRecord(
@@ -104,6 +109,19 @@ actor HistoryStore {
 
     func deleteAll() {
         if sqlite3_exec(db, "DELETE FROM transcription_history;", nil, nil, nil) == SQLITE_OK {
+            postDidChangeNotification()
+        }
+    }
+
+    /// Delete records in [start, end). Half-open interval.
+    func deleteRange(from start: Date, to end: Date) {
+        let sql = "DELETE FROM transcription_history WHERE created_at >= ? AND created_at < ?;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, iso.string(from: start))
+        bind(stmt, 2, iso.string(from: end))
+        if sqlite3_step(stmt) == SQLITE_DONE {
             postDidChangeNotification()
         }
     }
@@ -143,6 +161,19 @@ actor HistoryStore {
             )
         }
         return Statistics(totalDuration: 0, totalCharacters: 0, recordCount: 0)
+    }
+
+    // MARK: - Pruning
+
+    /// Delete records older than 90 days. Called once on init.
+    private func pruneOldRecords() {
+        let cutoff = iso.string(from: Date().addingTimeInterval(-90 * 24 * 3600))
+        let sql = "DELETE FROM transcription_history WHERE created_at < ?;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, cutoff)
+        sqlite3_step(stmt)
     }
 
     // MARK: - SQLite Helpers
