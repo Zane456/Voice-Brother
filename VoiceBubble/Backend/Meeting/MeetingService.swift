@@ -819,6 +819,10 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 language: languageHint,
                 context: nil
             )
+            // Drop MLX intermediates after each segment — segment durations
+            // vary up to vadForceCut (40s), so without this the cache grows
+            // monotonically across a long meeting.
+            MLXMemoryGovernor.reclaim()
             let processed = TextProcessor.collapseRepeats(
                 in: TextProcessor.removeFillers(from: text)
             )

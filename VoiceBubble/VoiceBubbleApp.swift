@@ -20,6 +20,11 @@ struct VoiceBubbleApp: App {
             MeetingRetranscribeLauncher.runAndExit(options: opts)
         }
 
+        // Bound MLX's GPU buffer cache before any model loads. Without this,
+        // variable-length transcription intermediates accumulate in MLX's
+        // recycle pool and process RSS grows to tens of GB after long use.
+        MLXMemoryGovernor.configure()
+
         let config = ConfigManager()
         let permissions = PermissionManager()
         let voice = VoiceService(configManager: config)

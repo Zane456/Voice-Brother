@@ -118,6 +118,9 @@ enum MeetingRetranscriber {
                     language: options.language,
                     context: nil
                 )
+                // Drop MLX intermediates per segment so a 2-hour re-transcribe
+                // doesn't accumulate dozens of GB of cached buffers.
+                MLXMemoryGovernor.reclaim()
                 let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
                     segments.append((startSec: windowStartSec, text: trimmed))

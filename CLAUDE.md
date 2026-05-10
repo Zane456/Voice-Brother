@@ -164,6 +164,17 @@ MeetingService 直接访问了 VoiceService 的内部属性，**不在 Protocol 
 ### ✅ 已修：ASR 共享竞态
 VoiceService 新增 `pendingASRTask` 追踪正在进行的转写；`handleMeetingToggle` 在把共享 engine 交给 MeetingService 前会 `await pendingASRTask?.value`。MeetingService.cleanup 也改为 async 并 await 自己的 `pendingTranscriptionTask`。
 
+### ✅ 已修：P0 MLX cache 失控（22+ GB RSS）
+**症状**：长时间使用后进程 RSS 涨到 20+ GB，最终触发 swap 颠簸。
+**根因**：MLX 默认 `cacheLimit = memoryLimit`（32GB Mac 上几乎等于无限制）。每次 `transcribe` 的音频长度不同 → 中间张量/KV-cache buffer 形状不同 → MLX 的 buffer 池**无法复用**变形 buffer，全部缓存沉积。文档原话："by the end of a long inference run, you may see several GB of cached memory ... if cache memory is unconstrained"。
+**修复**：新增 `Backend/Voice/MLXMemoryGovernor.swift`，启动时 `MLX.Memory.cacheLimit = 256 MB`，每次转写后调 `Memory.clearCache()`。接入点：
+- `VoiceBubbleApp.init()` 调 `configure()`
+- `VoiceService.transcribeAndInject` / `runPreviewTranscription`、`MeetingService.transcribeSegment`、`MeetingRetranscriber` 在转写完成后调 `reclaim()`
+- 调 `snapshotDescription()` 写日志便于回归监控
+
+**验证方法**：观察 `/tmp/vb_selflearn_debug.log` 中 `MLX active=... cache=...`，正常时 cache 应在每次转写后回到 0。
+**回归红线**：如果 active 持续上涨（不只是 peak），说明有新的 MLX 数组被作为长期持有的属性挂住了。
+
 ### P1（未修）：MeetingService 穿透访问 VoiceService 内部
 `voiceService?.keyboardListenerRef?.isMeetingActive` 和 `voiceService?.asrEngineRef` 绕过 Protocol 层。**已用锁保护 `isMeetingActive` getter/setter**，但架构层面仍破坏了前后端解耦。后续可在 VoiceServiceProtocol 中添加 `func setMeetingActive(_:)` 和 `func borrowASREngine() -> (any ASREngineProtocol)?`。
 

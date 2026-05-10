@@ -894,6 +894,10 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                 language: nil,
                 context: capturedContext
             )
+            // Preview runs every 1.5s during recording — by far the heaviest
+            // contributor to MLX cache growth in normal use. Reclaim each pass
+            // so the cache never balloons mid-recording.
+            MLXMemoryGovernor.reclaim()
             await MainActor.run {
                 guard let self else { return }
                 self.isPreviewTranscribing = false
@@ -1321,14 +1325,19 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         // language: nil = auto-detect (Qwen3-ASR is multilingual; pinning a
         // hint forced Japanese/English speech into Mandarin homophone mode).
         let text = await Task.detached { [engine] in
-            engine.transcribe(
+            let result = engine.transcribe(
                 audio: allSamples,
                 sampleRate: 16000,
                 language: nil,
                 context: capturedContext
             )
+            // Drop MLX intermediate buffers from the recycle pool. Variable
+            // audio lengths produce variable-shape intermediates that the pool
+            // cannot reuse, so without this they accumulate indefinitely.
+            MLXMemoryGovernor.reclaim()
+            return result
         }.value
-        debugLog("ASR raw result: \"\(text)\" (empty=\(text.isEmpty))")
+        debugLog("ASR raw result: \"\(text)\" (empty=\(text.isEmpty)) — \(MLXMemoryGovernor.snapshotDescription())")
 
         // Process text (Layer 1 filler removal + Layer 2 ITN + replacements)
         var processedText = TextProcessor.process(
