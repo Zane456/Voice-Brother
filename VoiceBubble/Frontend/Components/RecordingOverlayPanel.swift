@@ -15,10 +15,6 @@ class StreamingTextState: ObservableObject {
     @Published var maxTextWidth: CGFloat = 300
     @Published var mode: OverlayMode = .voice
     @Published var meetingElapsed: Int = 0  // seconds, for REC label
-    /// True between key release and final text injection — drives the
-    /// "识别中" hint so the user gets a clear "I'm working" signal instead
-    /// of the panel disappearing silently.
-    @Published var isFinalizing: Bool = false
 
     // Audio-driven waveform state
     @Published var audioLevel: CGFloat = 0
@@ -61,31 +57,53 @@ struct RecordingOverlayContentView: View {
     @ObservedObject var streamingState: StreamingTextState
     @EnvironmentObject private var theme: ThemeManager
 
+    @State private var dotOpacity: Double = 1.0
+
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
-            // Plain waveform in both modes — the menu bar carries the
-            // "REC 00:42" text for meetings, so the overlay doesn't need
-            // its own indicator dot. Earlier a small red pulse lived in
-            // the top-left corner for meeting mode, but it read as a stray
-            // orange speck against the warm-themed waveform bars.
+            // REC indicator: red dot + mono REC label. Meeting mode also shows
+            // an inline timer. Spec §6.8.
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(theme.destructive)
+                    .frame(width: 6, height: 6)
+                    .opacity(dotOpacity)
+                    .onAppear {
+                        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+                            dotOpacity = 0.35
+                        }
+                    }
+                Text("REC")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(theme.destructive)
+
+                if streamingState.mode == .meeting && streamingState.meetingElapsed > 0 {
+                    Text(formatElapsed(streamingState.meetingElapsed))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.textSecondary)
+                }
+            }
+            .padding(.leading, 10)
+            .padding(.trailing, 6)
+
             RecordingWaveformView(streamingState: streamingState)
-                .frame(width: 44, height: 44)
-                .opacity(streamingState.isFinalizing && streamingState.mode == .voice ? 0.55 : 1.0)
+                .frame(width: 36, height: 36)
 
             if streamingState.isEnabled && !streamingState.text.isEmpty {
                 Text(streamingState.text)
                     .font(.system(size: streamingState.fontSize, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .foregroundColor(theme.textPrimary)
                     .lineLimit(nil)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: streamingState.maxTextWidth, alignment: .leading)
                     .padding(.vertical, 12)
                     .padding(.trailing, 16)
+                    .padding(.leading, 4)
             }
         }
-        .frame(minHeight: 44, alignment: .center)
-        .animation(.easeInOut(duration: 0.18), value: streamingState.isFinalizing)
+        .frame(minHeight: 36, alignment: .center)
+        .background(theme.surfaceBackground)
     }
 
     private func formatElapsed(_ s: Int) -> String {
@@ -106,9 +124,11 @@ final class RecordingOverlayPanel: NSPanel {
 
     private let compactSize: CGFloat = 44
     private let topPadding: CGFloat = 20
-    private let cornerRadius: CGFloat = 22
-    /// Waveform area + trailing padding
-    private let horizontalOverhead: CGFloat = 60
+    /// Codex HUD radius — slightly larger than card radius (8) to read as a
+    /// pill, but not full circle. Spec §6.8.
+    private let cornerRadius: CGFloat = 12
+    /// REC label + waveform + trailing padding
+    private let horizontalOverhead: CGFloat = 110
 
     // MARK: Streaming State
 
@@ -136,10 +156,9 @@ final class RecordingOverlayPanel: NSPanel {
         hosting.layer?.masksToBounds = true
         self.hostingView = hosting
 
-        // contentView is now the NSVisualEffectView directly — re-host SwiftUI content into it.
-        if let visualEffect = contentView as? NSVisualEffectView {
-            visualEffect.subviews.forEach { $0.removeFromSuperview() }
-            visualEffect.addSubview(hosting)
+        if let backdrop = contentView {
+            backdrop.subviews.forEach { $0.removeFromSuperview() }
+            backdrop.addSubview(hosting)
         }
     }
 
@@ -158,50 +177,48 @@ final class RecordingOverlayPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         ignoresMouseEvents = true
-        hasShadow = false
+        // Codex HUD: window-level shadow gives the bubble visible weight
+        // against bright wallpapers without any custom CALayer halo.
+        hasShadow = true
         hidesOnDeactivate = false
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
-        // Build content hierarchy: NSVisualEffectView > NSHostingView.
-        // No outer container, no custom CALayer shadow, no breathing glow:
-        // those additions caused a visible rectangular silhouette around the
-        // rounded panel (especially on light-themed backgrounds where the
-        // soft drop-shadow's bounding box read as a square halo). The system
-        // popover material gives a clean rounded shape with no halo.
+        // Codex HUD: flat dark surface, hairline border, no vibrancy/material.
+        // Replaces the previous NSVisualEffectView popover material — Codex
+        // doesn't use vibrancy anywhere in its UI; it paints flat colors.
         let contentViewSwift = RecordingOverlayContentView(streamingState: streamingState)
         let hosting = NSHostingView(rootView: AnyView(contentViewSwift))
         hosting.autoresizingMask = [.width, .height]
         hosting.frame = NSRect(x: 0, y: 0, width: compactSize, height: compactSize)
         self.hostingView = hosting
 
-        let visualEffect = NSVisualEffectView()
-        visualEffect.material = .popover         // adaptive light/dark, no harsh tint
-        visualEffect.blendingMode = .behindWindow
-        visualEffect.state = .active
-        visualEffect.wantsLayer = true
-        visualEffect.layer?.cornerRadius = cornerRadius
-        visualEffect.layer?.cornerCurve = .continuous
-        visualEffect.layer?.masksToBounds = true
-        visualEffect.frame = NSRect(x: 0, y: 0, width: compactSize, height: compactSize)
-        visualEffect.autoresizingMask = [.width, .height]
+        let backdrop = NSView()
+        backdrop.wantsLayer = true
+        backdrop.layer?.backgroundColor = NSColor(red: 0x20/255.0, green: 0x21/255.0, blue: 0x23/255.0, alpha: 1.0).cgColor
+        backdrop.layer?.cornerRadius = cornerRadius
+        backdrop.layer?.cornerCurve = .continuous
+        backdrop.layer?.borderColor = NSColor(red: 0x40/255.0, green: 0x43/255.0, blue: 0x4A/255.0, alpha: 1.0).cgColor
+        backdrop.layer?.borderWidth = 1
+        backdrop.layer?.masksToBounds = true
+        backdrop.frame = NSRect(x: 0, y: 0, width: compactSize, height: compactSize)
+        backdrop.autoresizingMask = [.width, .height]
 
-        // Shape layer mask — more reliable clipping than cornerRadius alone
+        // Shape mask for crisp clipping on resize
         let shapeMask = CAShapeLayer()
-        shapeMask.path = CGPath(roundedRect: visualEffect.bounds,
+        shapeMask.path = CGPath(roundedRect: backdrop.bounds,
                                  cornerWidth: cornerRadius,
                                  cornerHeight: cornerRadius,
                                  transform: nil)
-        visualEffect.layer?.mask = shapeMask
+        backdrop.layer?.mask = shapeMask
 
-        // Clip hosting view to rounded corners
         hosting.layer?.cornerRadius = cornerRadius
         hosting.layer?.cornerCurve = .continuous
         hosting.layer?.masksToBounds = true
 
-        visualEffect.addSubview(hosting)
-        self.contentView = visualEffect
+        backdrop.addSubview(hosting)
+        self.contentView = backdrop
 
         // Start hidden (keep in window hierarchy for .canJoinAllSpaces)
         alphaValue = 0
@@ -232,7 +249,6 @@ final class RecordingOverlayPanel: NSPanel {
         streamingState.maxTextWidth = maxTextWidth
         streamingState.mode = mode
         streamingState.meetingElapsed = 0
-        streamingState.isFinalizing = false
         streamingState.reset()
         // Always start at compact circular size — meeting mode no longer
         // shows REC + time inline (the menu bar carries that), so we can
@@ -256,12 +272,6 @@ final class RecordingOverlayPanel: NSPanel {
             self.animator().alphaValue = 1.0
             self.animator().setFrameOrigin(finalOrigin)
         }
-    }
-
-    /// Dim the waveform during the gap between key release and final text
-    /// injection, so the user has a visual cue that we're working on it.
-    func markFinalizing() {
-        streamingState.isFinalizing = true
     }
 
     /// Last brief message + when it was shown. Used to suppress repeat toasts
@@ -294,7 +304,6 @@ final class RecordingOverlayPanel: NSPanel {
         let maxTextWidth = screenWidth / 2 - horizontalOverhead
 
         streamingState.isEnabled = true
-        streamingState.isFinalizing = false
         streamingState.fontSize = fontSize
         streamingState.maxTextWidth = maxTextWidth
         streamingState.mode = .voice
@@ -318,25 +327,19 @@ final class RecordingOverlayPanel: NSPanel {
 
     func hide() {
         let myToken = showToken
-        let originalY = frame.origin.y
 
-        // No frame-size animation — only fade alpha + small upward nudge.
-        // Scaling width/height during hide caused the shadow path and the
-        // visualEffect mask radius to fall out of sync, leaving a visible
-        // rectangular silhouette at the end of the animation. Keeping the
-        // dimensions constant means the rounded shape stays a clean circle/
-        // capsule from start to finish.
+        // Fast fade only — no positional slide. The bubble's hide is meant
+        // to feel "instant" on key release; a directional slide makes the
+        // 80 ms read as slower than it is, and the slide direction was
+        // arbitrary (the bubble doesn't live at a panel edge).
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.22
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            context.duration = 0.08
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             self.animator().alphaValue = 0.0
-            self.animator().setFrameOrigin(NSPoint(x: self.frame.origin.x,
-                                                    y: originalY + 6))
         }, completionHandler: { [weak self] in
             guard let self, self.showToken == myToken else { return }
             self.streamingState.reset()
             self.streamingState.isEnabled = false
-            self.streamingState.isFinalizing = false
             self.setContentSize(NSSize(width: self.compactSize, height: self.compactSize))
         })
     }
@@ -393,9 +396,9 @@ final class RecordingOverlayPanel: NSPanel {
 
         // Update corner radius and mask for new size
         let radius = min(panelHeight / 2, cornerRadius)
-        if let visualEffect = contentView as? NSVisualEffectView {
-            visualEffect.layer?.cornerRadius = radius
-            if let shapeMask = visualEffect.layer?.mask as? CAShapeLayer {
+        if let backdrop = contentView {
+            backdrop.layer?.cornerRadius = radius
+            if let shapeMask = backdrop.layer?.mask as? CAShapeLayer {
                 shapeMask.path = CGPath(roundedRect: CGRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
                                          cornerWidth: radius,
                                          cornerHeight: radius,
