@@ -97,10 +97,24 @@ final class MenuBarController: NSObject {
         // Length toggle: square when icon-only (matches neighbour width),
         // variable when we need to fit "REC 00:42" text.
         if case .recording = meetingService.state {
-            button.title = " REC \(formatElapsed(meetingService.elapsedSeconds))"
+            // Codex-style: monospace digits so the seconds counter doesn't
+            // jitter as digit widths change. NSStatusItem.button rejects
+            // attributedTitle font hints unless we set both attributedTitle
+            // and an empty title — so we use NSAttributedString throughout.
+            let titleString = " REC \(formatElapsed(meetingService.elapsedSeconds))"
+            let monoFont = NSFont.monospacedDigitSystemFont(
+                ofSize: NSFont.systemFontSize,
+                weight: .semibold
+            )
+            let attrTitle = NSMutableAttributedString(
+                string: titleString,
+                attributes: [.font: monoFont]
+            )
+            button.attributedTitle = attrTitle
             button.imagePosition = .imageLeading
             statusItem.length = NSStatusItem.variableLength
         } else {
+            button.attributedTitle = NSAttributedString(string: "")
             button.title = ""
             button.imagePosition = .imageOnly
             statusItem.length = Self.iconOnlyLength
