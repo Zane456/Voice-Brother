@@ -88,34 +88,19 @@ struct MainWindow: View {
 
                 sidebar
                     .frame(width: 76, height: geometry.size.height)
-                    .background(
-                        // Minimal & material themes both have visibly tinted
-                        // content surfaces, so they need a solid sidebar fill
-                        // (lighter than content) to avoid the rounded panel
-                        // disappearing into the colour. Only the very-light
-                        // expressive themes (月光白/樱花粉/薄荷绿) keep the
-                        // ultraThinMaterial frost — their backgrounds are
-                        // already near-white, so the frosted look reads as
-                        // a soft glassy panel rather than a muddy blob.
-                        Group {
-                            if theme.decoration == .expressive {
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .fill(.ultraThinMaterial)
-                            } else {
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .fill(theme.sidebarBackground)
-                            }
-                        }
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(theme.border.opacity(0.4), lineWidth: 0.5)
-                    )
+                    .background(theme.sidebarBackground)
+                    .overlay(alignment: .trailing) {
+                        // Codex sidebar: flat full-height panel + 1pt vertical
+                        // hairline divider on the inside edge. No rounded corners,
+                        // no shadow — sidebar is structure, not a floating card.
+                        Rectangle()
+                            .fill(theme.border)
+                            .frame(width: 1)
+                    }
             }
             .animation(.easeInOut(duration: 0.25), value: permissionManager.status.allGranted)
         }
-        .background(GlassmorphismBackground().ignoresSafeArea())
+        .background(theme.windowBackground.ignoresSafeArea())
         .ignoresSafeArea()
         // Each theme picks its own typeface design (serif for paper themes,
         // monospaced for the technical theme, rounded for Material). Setting
@@ -256,19 +241,19 @@ struct MainWindow: View {
         let isSelected = selectedTab == tab
 
         return Button {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.78, blendDuration: 0.05)) {
+            // Codex motion language: ease-out, no spring bounce.
+            withAnimation(.easeOut(duration: 0.15)) {
                 selectedTab = tab
             }
         } label: {
             Image(systemName: tab.icon)
                 .font(.system(size: 16, weight: isSelected ? .semibold : .regular))
                 .frame(width: 40, height: 40)
-                .foregroundColor(isSelected ? theme.accentSecondary : theme.sidebarText)
+                .foregroundColor(isSelected ? theme.accent : theme.sidebarText)
                 .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(isSelected ? theme.sidebarSelectedBg : Color.clear)
                 )
-                .scaleEffect(isSelected ? 1.0 : 0.96)
         }
         .buttonStyle(.plain)
         .focusable(false)
