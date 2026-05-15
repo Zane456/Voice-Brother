@@ -31,18 +31,8 @@ struct MeetingSettingsSection: View {
     }
 
     private func provenanceBadge(isCloud: Bool) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: isCloud ? "cloud.fill" : "lock.shield.fill")
-                .font(.system(size: 10))
-            Text(isCloud ? "云端" : "本地")
-                .font(.system(size: 11, weight: .semibold))
-        }
-        .foregroundColor(.white)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(
-            Capsule().fill(theme.accent.opacity(0.75))
-        )
+        CodexBadge(text: isCloud ? "云端" : "本地",
+                   variant: isCloud ? .cloud : .local)
     }
 
     // MARK: - ASR Model Card

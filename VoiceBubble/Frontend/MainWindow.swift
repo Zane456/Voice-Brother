@@ -148,18 +148,9 @@ struct MainWindow: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(theme.textPrimary)
             Spacer()
-            Button {
-                showOnboarding = true
-            } label: {
-                Text("去授权")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(theme.accentSecondary))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("打开权限设置")
+            Button("去授权") { showOnboarding = true }
+                .buttonStyle(CodexPrimaryButtonStyle(minHeight: 26))
+                .accessibilityLabel("打开权限设置")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -182,17 +173,8 @@ struct MainWindow: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(theme.textPrimary)
             Spacer()
-            Button {
-                permissionManager.relaunchApp()
-            } label: {
-                Text("立即重启")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(theme.accent))
-            }
-            .buttonStyle(.plain)
+            Button("立即重启") { permissionManager.relaunchApp() }
+                .buttonStyle(CodexPrimaryButtonStyle(minHeight: 26))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

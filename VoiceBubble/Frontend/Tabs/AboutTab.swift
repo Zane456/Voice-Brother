@@ -38,11 +38,6 @@ struct AboutTab: View {
                              enabled: !configManager.privacyMode,
                              onText: "本地保存中",
                              offText: "已暂停（隐私模式）")
-                Divider().padding(.horizontal, 16)
-                dataStateRow(label: "智能学习",
-                             enabled: !configManager.privacyMode && configManager.selfLearningEnabled,
-                             onText: "本地记录中",
-                             offText: configManager.privacyMode ? "已暂停（隐私模式）" : "已关闭")
             }
             .glassCard()
 
@@ -76,11 +71,8 @@ struct AboutTab: View {
     }
 
     private var shortPolishState: DataFlowState {
-        if configManager.llmProviderType == "cloud" && configManager.cloudLLMEnabled {
+        if configManager.cloudLLMEnabled {
             return .cloud(configManager.llmProvider)
-        }
-        if configManager.llmProviderType == "local" {
-            return .local
         }
         return .disabled
     }
@@ -135,10 +127,13 @@ struct AboutTab: View {
             }
             Spacer()
             Text(badgeText)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.white)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(badgeColor)
                 .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(Capsule().fill(badgeColor.opacity(0.75)))
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(badgeColor.opacity(0.15))
+                )
         }
         .padding(16)
     }
@@ -173,13 +168,18 @@ struct AboutTab: View {
                 .font(.system(size: 22, weight: .bold))
 
             Text("版本 \(AboutTab.currentVersion)")
-                .font(.system(size: 13))
+                .font(.system(size: 13, design: .monospaced))
                 .foregroundColor(theme.textSecondary)
 
             Text("macOS 原生语音输入工具\n按住说话，松开输入")
                 .font(.system(size: 12))
                 .foregroundColor(theme.textTertiary)
                 .multilineTextAlignment(.center)
+
+            Text("UI 风格：OpenAI Codex Mac App")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(theme.textTertiary.opacity(0.7))
+                .padding(.top, 8)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)

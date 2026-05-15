@@ -26,10 +26,6 @@ struct VoiceSettingsSection: View {
     @State private var editTo = ""
     @State private var hasUnsavedChanges = false
 
-    // Learned corrections state
-    private let correctionStore = CorrectionStore()
-    @State private var pendingLearnings: [(from: String, to: String, count: Int)] = []
-
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Input Behavior toggles (moved from 通用 tab)
@@ -54,9 +50,6 @@ struct VoiceSettingsSection: View {
 
             // Replacement Rules
             replacementRulesView
-
-            // Learned Corrections
-            learnedCorrectionsView
         }
         .alert("切换到云端语音识别？", isPresented: $showASRCloudConfirm) {
             Button("取消", role: .cancel) {
@@ -151,18 +144,8 @@ struct VoiceSettingsSection: View {
     // MARK: - Provenance Badge
 
     private func provenanceBadge(isCloud: Bool) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: isCloud ? "cloud.fill" : "lock.shield.fill")
-                .font(.system(size: 10))
-            Text(isCloud ? "云端" : "本地")
-                .font(.system(size: 11, weight: .semibold))
-        }
-        .foregroundColor(.white)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(
-            Capsule().fill(theme.accent.opacity(0.75))
-        )
+        CodexBadge(text: isCloud ? "云端" : "本地",
+                   variant: isCloud ? .cloud : .local)
     }
 
     // MARK: - Trigger Key
@@ -548,123 +531,6 @@ struct VoiceSettingsSection: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
-        .onAppear {
-            // Force-migrate any user still on the retired local LLM mode.
-            if configManager.llmProviderType != "cloud" {
-                configManager.llmProviderType = "cloud"
-                if voiceService.chatModelReady { voiceService.stopChatModel() }
-            }
-        }
-    }
-
-    private var localLLMContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("模型")
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.textSecondary)
-                    .frame(width: 66, alignment: .trailing)
-
-                Picker("", selection: $configManager.polishModel) {
-                    ForEach(PolishModel.allCases) { model in
-                        Text(model.fullName).tag(model.rawValue)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .onChange(of: configManager.polishModel) { _, _ in
-                    if voiceService.chatModelReady {
-                        voiceService.stopChatModel()
-                    }
-                }
-
-                Spacer()
-
-                if let currentModel = PolishModel(rawValue: configManager.polishModel) {
-                    modelInfoTag(icon: "cpu", text: currentModel.quantization)
-                    modelInfoTag(icon: "internaldrive", text: currentModel.estimatedSize)
-                }
-            }
-
-            if let currentModel = PolishModel(rawValue: configManager.polishModel) {
-                HStack {
-                    Text("")
-                        .frame(width: 66)
-                    Text(currentModel.huggingFaceId)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.textTertiary)
-                    Spacer()
-                }
-            }
-
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(voiceService.chatModelReady ? Color.green : (voiceService.chatModelLoading ? theme.learningOrange : theme.border))
-                    .frame(width: 8, height: 8)
-                Text(llmStatusText)
-                    .font(.system(size: 13))
-                    .foregroundColor(voiceService.chatModelReady ? Color.green : theme.textSecondary)
-
-                Spacer()
-
-                Button(action: {
-                    if voiceService.chatModelReady {
-                        voiceService.stopChatModel()
-                    } else {
-                        voiceService.startChatModel()
-                    }
-                }) {
-                    Text(voiceService.chatModelReady ? "停止" : "启动")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .background(voiceService.chatModelReady ? theme.stop : theme.accent)
-                        .cornerRadius(8)
-                }
-                .buttonStyle(.plain)
-                .disabled(voiceService.chatModelLoading)
-            }
-
-            if voiceService.chatModelLoading, let progress = voiceService.chatModelDownloadProgress {
-                VStack(spacing: 4) {
-                    GeometryReader { geometry in
-                        ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(theme.border)
-                                .frame(height: 6)
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(theme.accentSecondary)
-                                .frame(width: max(6, geometry.size.width * progress.fraction), height: 6)
-                        }
-                    }
-                    .frame(height: 6)
-
-                    HStack {
-                        Text(progress.percentageText)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.textPrimary)
-                        Spacer()
-                        Text("\(byteString(progress.downloaded)) / \(byteString(progress.total))")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.textSecondary)
-                    }
-                }
-            }
-
-            Text("点击「启动」下载并加载模型（首次约 318MB），加载后语音转写将自动优化")
-                .font(.system(size: 12))
-                .foregroundColor(theme.textSecondary)
-        }
-    }
-
-    private var llmStatusText: String {
-        if voiceService.chatModelReady { return "模型已加载" }
-        if voiceService.chatModelLoading {
-            if voiceService.chatModelDownloadProgress != nil { return "下载中…" }
-            return "加载中…"
-        }
-        return "模型未加载"
     }
 
     private var cloudLLMContent: some View {
@@ -1183,201 +1049,6 @@ struct VoiceSettingsSection: View {
         }
         .padding(12)
         .glassCard(cornerRadius: 10, borderColor: theme.accentSecondary)
-    }
-
-    // MARK: - Learned Corrections
-
-    private var learnedRules: [ReplacementRule] {
-        configManager.replacements.filter { $0.source == .learned }
-    }
-
-    private var learnedCorrectionsView: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                SectionHeader(title: "智能学习")
-
-                Spacer()
-
-                if !learnedRules.isEmpty || !pendingLearnings.isEmpty {
-                    Text("阈值: \(configManager.selfLearningThreshold) 次")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.textTertiary)
-                }
-            }
-
-            Text("系统会记录你对转写结果的修改，相同纠正出现 \(configManager.selfLearningThreshold) 次后自动加入替换规则")
-                .font(.system(size: 12))
-                .foregroundColor(theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            // Already learned rules
-            if !learnedRules.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("已学会")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.accent)
-                        .padding(.leading, 4)
-
-                    ForEach(learnedRules) { rule in
-                        HStack(spacing: 8) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.accent)
-
-                            Text(rule.from)
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.destructive)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(theme.destructiveBackground)
-                                .cornerRadius(4)
-
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.textTertiary)
-
-                            Text(rule.to)
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.accent)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(theme.successBackground)
-                                .cornerRadius(4)
-
-                            Spacer()
-
-                            Button {
-                                configManager.replacements.removeAll { $0.id == rule.id }
-                            } label: {
-                                Image(systemName: "trash")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(theme.destructive)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .glassCard(cornerRadius: 8)
-                    }
-                }
-            }
-
-            // Pending learnings (not yet reached threshold)
-            if !pendingLearnings.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("学习中")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.learningOrange)
-                        .padding(.leading, 4)
-
-                    ForEach(pendingLearnings, id: \.from) { learning in
-                        HStack(spacing: 8) {
-                            Image(systemName: "brain.head.profile")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.learningOrange)
-
-                            Text(learning.from)
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.textSecondary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(theme.inputBackground)
-                                .cornerRadius(4)
-
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.textTertiary)
-
-                            Text(learning.to)
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.textSecondary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(theme.inputBackground)
-                                .cornerRadius(4)
-
-                            Spacer()
-
-                            // Progress indicator
-                            Text("\(learning.count)/\(configManager.selfLearningThreshold)")
-                                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                                .foregroundColor(theme.learningOrange)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(theme.learningBackground)
-                                .cornerRadius(4)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .stroke(theme.learningBorder, lineWidth: 1)
-                                )
-
-                            // Manually promote to rule
-                            Button {
-                                let rule = ReplacementRule(from: learning.from, to: learning.to, source: .learned)
-                                configManager.replacements.append(rule)
-                                Task {
-                                    await correctionStore.markAsApplied(from: learning.from, to: learning.to)
-                                    await loadPendingLearnings()
-                                }
-                            } label: {
-                                Image(systemName: "plus.circle")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.accent)
-                            }
-                            .buttonStyle(.plain)
-                            .help("立即添加为替换规则")
-
-                            // Dismiss this learning candidate
-                            Button {
-                                Task {
-                                    await correctionStore.deletePending(from: learning.from, to: learning.to)
-                                    await loadPendingLearnings()
-                                }
-                            } label: {
-                                Image(systemName: "trash")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(theme.destructive)
-                            }
-                            .buttonStyle(.plain)
-                            .help("不学这条")
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .glassCard(cornerRadius: 8)
-                    }
-                }
-            }
-
-            // Empty state
-            if learnedRules.isEmpty && pendingLearnings.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "brain")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.border)
-                    Text("尚未学到任何纠正模式")
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.textTertiary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-            }
-        }
-        .task {
-            await loadPendingLearnings()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .correctionStoreDidChange)) { _ in
-            Task { await loadPendingLearnings() }
-        }
-    }
-
-    private func loadPendingLearnings() async {
-        let learnings = await correctionStore.fetchPendingLearnings(threshold: 1)
-        let threshold = configManager.selfLearningThreshold
-        // Only show those that haven't reached the threshold yet
-        let pending = learnings.filter { $0.count < threshold }
-        await MainActor.run {
-            pendingLearnings = pending
-        }
     }
 
     // MARK: - Helpers

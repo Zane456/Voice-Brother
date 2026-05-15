@@ -82,7 +82,7 @@ struct MeetingTab: View {
 
                 if isRecording {
                     Text(elapsedTime)
-                        .font(.system(size: 22, weight: .semibold).monospacedDigit())
+                        .font(.system(size: 22, weight: .semibold, design: .monospaced).monospacedDigit())
                         .foregroundColor(theme.destructive)
                 } else {
                     Text(subtitle())
