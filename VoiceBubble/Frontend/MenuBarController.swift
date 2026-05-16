@@ -38,10 +38,7 @@ final class MenuBarController: NSObject {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: Self.iconOnlyLength)
         if let button = statusItem.button {
-            let img = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Voice Bubble")?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .medium))
-            img?.size = NSSize(width: 18, height: 18)
-            button.image = img
+            button.image = StatusBarIcon.idle()
             button.imagePosition = .imageOnly
         }
         rebuildMenu()
@@ -74,16 +71,7 @@ final class MenuBarController: NSObject {
 
     private func refreshAppearance() {
         guard let button = statusItem.button else { return }
-        let (symbol, tint, label) = currentIconState()
-        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
-            .withSymbolConfiguration(config)
-        // Constrain to a fixed 18×18 footprint so the menu-bar item width
-        // doesn't expand for symbols whose glyphs have wide intrinsic bounds
-        // (e.g. "waveform" — without this it leaves a visibly larger gap
-        // between us and neighbouring status items).
-        image?.size = NSSize(width: 18, height: 18)
-        image?.isTemplate = (tint == nil)
+        let (image, tint, label) = currentIconState()
         button.image = image
         button.contentTintColor = tint
         button.toolTip = label
@@ -122,29 +110,44 @@ final class MenuBarController: NSObject {
         rebuildMenu()
     }
 
-    /// Returns (sf-symbol, tint color or nil for template, accessibility label).
+    /// Returns (image, tint color or nil for template tinting, accessibility label).
     ///
-    /// Meeting recording is the only state that overrides the menu-bar icon
-    /// (red dot + REC timer). Voice states reuse the same "waveform" glyph so
-    /// the icon doesn't visibly shrink/grow when the push-to-talk flow cycles
-    /// through recording → transcribing → ready. State is still surfaced via
-    /// tooltip and menu text.
-    private func currentIconState() -> (String, NSColor?, String) {
+    /// Meeting recording overrides the icon to a "recording" variant where
+    /// the centre waveform bar becomes a solid dot, and tints it red. Voice
+    /// states reuse the idle bubble — push-to-talk cycles fast enough that
+    /// flicking the icon mid-transcription would just look noisy.
+    private func currentIconState() -> (NSImage, NSColor?, String) {
         if case .recording = meetingService.state {
-            return ("record.circle.fill", .systemRed, "会议录制中")
+            return (StatusBarIcon.recording(), .systemRed, "录制中")
         }
-        return ("waveform", nil, voiceService.state.displayText)
+        return (StatusBarIcon.idle(), nil, voiceService.state.displayText)
     }
 
     // MARK: - Menu
 
+    /// Fixed width for the custom header view. View-based menu items render
+    /// edge-to-edge, so this also sets the menu's minimum width — chosen to sit
+    /// comfortably alongside the text rows below.
+    private static let headerWidth: CGFloat = 256
+
     private func rebuildMenu() {
         let menu = NSMenu()
 
-        // Status header (disabled, informational)
-        let statusItem = NSMenuItem(title: statusLine(), action: nil, keyEquivalent: "")
-        statusItem.isEnabled = false
-        menu.addItem(statusItem)
+        // Status header — a custom view-based item: brand mark, app name, a
+        // live status line, and an SF Symbol provenance chip. Disabled so it
+        // never highlights; it's purely informational.
+        let headerItem = NSMenuItem()
+        headerItem.isEnabled = false
+        let header = MenuBarHeaderView(
+            voiceState: voiceService.state,
+            meetingState: meetingService.state,
+            isCloud: configManager.asrProviderType == "cloud",
+            width: Self.headerWidth
+        )
+        let hosting = NSHostingView(rootView: header)
+        hosting.frame = NSRect(origin: .zero, size: hosting.fittingSize)
+        headerItem.view = hosting
+        menu.addItem(headerItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -164,13 +167,15 @@ final class MenuBarController: NSObject {
         // Meeting toggle
         let meetingTitle: String
         switch meetingService.state {
-        case .idle, .error: meetingTitle = "开始会议录制"
-        case .recording: meetingTitle = "停止会议录制（\(formatElapsed(meetingService.elapsedSeconds))）"
+        case .idle, .error: meetingTitle = "开始录制"
+        case .preparing: meetingTitle = "正在准备…"
+        case .recording: meetingTitle = "停止录制（\(formatElapsed(meetingService.elapsedSeconds))）"
         case .finishing: meetingTitle = "正在保存…"
         case .summarizing: meetingTitle = "正在生成摘要…"
         }
         let meetingItem = NSMenuItem(title: meetingTitle, action: #selector(toggleMeeting), keyEquivalent: "")
         meetingItem.target = self
+        if case .preparing = meetingService.state { meetingItem.isEnabled = false }
         if case .finishing = meetingService.state { meetingItem.isEnabled = false }
         if case .summarizing = meetingService.state { meetingItem.isEnabled = false }
         menu.addItem(meetingItem)
@@ -183,7 +188,7 @@ final class MenuBarController: NSObject {
         menu.addItem(showItem)
 
         // Open meeting folder
-        let openFolderItem = NSMenuItem(title: "打开会议文件夹", action: #selector(openMeetingFolder), keyEquivalent: "")
+        let openFolderItem = NSMenuItem(title: "打开录音文件夹", action: #selector(openMeetingFolder), keyEquivalent: "")
         openFolderItem.target = self
         menu.addItem(openFolderItem)
 
@@ -194,13 +199,6 @@ final class MenuBarController: NSObject {
         menu.addItem(quitItem)
 
         self.statusItem.menu = menu
-    }
-
-    private func statusLine() -> String {
-        let isCloud = configManager.asrProviderType == "cloud"
-        let provenance = isCloud ? "☁️ 云端" : "🔒 本地"
-        let privacyTag = configManager.privacyMode ? " · 🛡 隐私模式" : ""
-        return "Voice Bubble · \(provenance)\(privacyTag) · \(voiceService.state.displayText)"
     }
 
     private func handleMeetingTimer(for state: MeetingState) {
@@ -246,5 +244,100 @@ final class MenuBarController: NSObject {
 
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+}
+
+// MARK: - Menu Header
+
+/// Informational header at the top of the menu-bar dropdown.
+///
+/// Three elements on one row: the brand mark, a name + live-status stack, and
+/// a provenance chip. Uses only semantic colours (`.primary` / `.secondary`)
+/// and a fixed brand blue — never `ThemeManager`, because the menu's NSWindow
+/// always renders in the *system* appearance, which may differ from the app's
+/// own light/dark override.
+private struct MenuBarHeaderView: View {
+
+    let voiceState: ServiceState
+    let meetingState: MeetingState
+    let isCloud: Bool
+    let width: CGFloat
+
+    /// Codex brand blue (#339CFF) — the only accent in the palette. Hard-coded
+    /// rather than themed so it reads identically in light and dark menus.
+    private let brandBlue = Color(red: 0x33 / 255, green: 0x9C / 255, blue: 0xFF / 255)
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image("AppLogoMark")
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Voice Bubble")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 6, height: 6)
+                    Text(statusText)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            provenanceChip
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .frame(width: width, alignment: .leading)
+    }
+
+    /// "本地" / "云端" pill — SF Symbol + label, small-radius rectangle to match
+    /// the Codex badge shape language (replaces the old 🔒 / ☁️ emoji).
+    private var provenanceChip: some View {
+        HStack(spacing: 3) {
+            Image(systemName: isCloud ? "cloud.fill" : "lock.shield.fill")
+                .font(.system(size: 9, weight: .semibold))
+            Text(isCloud ? "云端" : "本地")
+                .font(.system(size: 10.5, weight: .semibold))
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color.primary.opacity(0.07))
+        )
+    }
+
+    /// Meeting activity outranks voice state — when a meeting is in progress
+    /// that's what the user wants reflected here.
+    private var statusText: String {
+        switch meetingState {
+        case .preparing:   return "会议准备中…"
+        case .recording:   return "会议录制中"
+        case .finishing:   return "会议处理中…"
+        case .summarizing: return "生成摘要中…"
+        case .idle, .error: break
+        }
+        return voiceState.displayText
+    }
+
+    /// Brand blue when something is live or ready, dim grey when idle.
+    private var statusColor: Color {
+        if case .idle = meetingState {} else { return brandBlue }
+        switch voiceState {
+        case .ready, .recording, .transcribing: return brandBlue
+        case .downloading, .loading:             return .secondary
+        case .stopped, .error:                   return Color.secondary.opacity(0.55)
+        }
     }
 }
