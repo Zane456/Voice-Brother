@@ -320,6 +320,7 @@ final class AppConfig: ObservableObject {
         defaults.set(model, forKey: "model")
         defaults.set(removeFillers, forKey: "removeFillers")
         defaults.set(spaceReposition, forKey: "spaceReposition")
+        defaults.set(voiceInputLanguage, forKey: "voiceInputLanguage")
         defaults.set(meetingSavePath, forKey: "meetingSavePath")
         defaults.set(preserveClipboard, forKey: "preserveClipboard")
         defaults.set(historyRetentionMonths, forKey: "historyRetentionMonths")
