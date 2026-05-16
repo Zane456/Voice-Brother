@@ -3,7 +3,7 @@
 # Voice Brother
 
 <p align="center">
-  <img src="assets/hero.png" alt="Voice Brother macOS 中文语音输入工具，按住说话松开输入" width="640" />
+  <img src="assets/hero-banner.png" alt="Voice Brother macOS 中文语音输入工具，按住说话松开输入" width="640" />
 </p>
 
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-orange.svg)](LICENSE)
