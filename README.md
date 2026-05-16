@@ -1,189 +1,184 @@
+<div align="center">
+
 # Voice Brother
 
 <p align="center">
-  <img src="screenshot.png" alt="Voice Brother Screenshots" width="800">
+  <img src="assets/hero.png" alt="Voice Brother — macOS 中文语音输入工具，按住说话松开输入" width="640" />
 </p>
+
+> *「按住说话,松开输入。你的声音不离开这台 Mac。」*
+
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-orange.svg)](LICENSE)
+[![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-black.svg)]()
+[![Language: Swift](https://img.shields.io/badge/Language-Swift-f05138.svg)]()
+[![Inference: 本地推理](https://img.shields.io/badge/Inference-%E6%9C%AC%E5%9C%B0%E6%8E%A8%E7%90%86-blue.svg)]()
+
+<br>
+
+**给中国人用的 macOS 中文语音输入工具——按住快捷键说话,松开后文字自动落到光标位置。**
+
+<br>
+
+微信输入法加不了热词,豆包把打字和语音焊在一起,智谱够全但慢。Voice Brother 用本地模型把这些问题一次解决:按住快捷键(键盘修饰键,**或鼠标侧键**)说话,松开就把文字送到光标处——识别在你自己的 Mac 上跑,够快,还能喂进你专业领域的热词和替换规则。它顺带还是个系统级录音器。
+
+<br>
+
+[看效果](#效果示例) · [为什么换掉你的输入法](#为什么换掉你的输入法) · [安装](#安装) · [功能](#功能) · [工作原理](#工作原理)
+
+</div>
+
+---
+
+## 效果示例
 
 <p align="center">
-  <a href="https://x.com/ZaneZaneZzZZ">X / Twitter</a> ·
-  <a href="https://www.xiaohongshu.com/user/profile/Zz302179383">小红书</a> ·
-  <a href="https://github.com/Zane456">GitHub</a>
+  <img src="assets/app-screenshot.png" alt="Voice Brother macOS 应用截图——通用设置、语音设置、历史词云与会议页" width="720" />
 </p>
 
-macOS 原生语音输入工具。按住快捷键说话，松开后文字自动输入到光标位置。默认本地推理，也支持云端引擎。
+你按住一个键,像正常人那样说话——带着语气词、卡顿、重说。Voice Brother 还给你干净的文字:
+
+```
+按住右 ⌘ / 鼠标侧键   ❯  "嗯…那个…我们明天那个会议能不能改到下午三点啊"
+                        │  Qwen3-ASR 本地转写 → 语气词过滤 → 替换规则 → 可选 LLM 润色
+松开                  ❯  "我们明天的会议能否改到下午三点？"   ← 文字落入光标
+按 ESC                ❯  取消本次录音，不输入任何文字
+```
+
+这不是给云端听写挂了个快捷键。音频由 MLX 模型在本机转写,热词和替换规则按你的设定生效,润色环节走你自己配置的 LLM——"草稿质量的口语"在碰到你的文档之前,就变成了"可以直接发出去的文字"。
+
+---
+
+## 为什么换掉你的输入法
+
+| 输入法 | 加热词 | 实际用起来的槽点 |
+| :--- | :---: | :--- |
+| 微信输入法 | ❌ | 加不了识别热词,专业术语、生僻词常年识别错 |
+| 豆包输入法 | ❌ | 打字和语音两套功能焊死在一起,想切回别的键盘很别扭 |
+| 智谱输入法 | ✅ | 能加热词,但识别慢,等得着急 |
+| **Voice Brother** | ✅ **有序热词 + 替换规则** | 本地模型、按机器性能选档、独立 App 不抢输入法、鼠标侧键触发 |
+
+它凭什么不一样:
+
+**1. 本地模型,够快**——识别在你自己的 Mac 上跑,音频不上云。可以**按电脑性能选模型档位**:0.6B 已经够准、生成够快,机器强就上 1.7B。
+**2. 它不是输入法**——是一个独立 App 配全局快捷键,不接管你的键盘、不占用输入法位,所以**不影响你切换任何其他键盘**。这正是豆包那套混在一起的方案做不到的。
+**3. 鼠标侧键就能触发**——触发键支持鼠标上的侧向按键(如 Logitech 后退/前进键),**不必长按键盘**就能开始/结束语音输入。顺手程度是质变——这一点很重要。
+**4. 热词 + 替换规则**——把你专业领域的术语、口头常用词、固定写法都喂进去,有序热词增强加上硬替换规则,识别不再丢词、不再写错。
+
+---
+
+## 安装
+
+需要 macOS 14+ 和 Xcode 15+。
+
+```bash
+git clone https://github.com/Zane456/Voice-Brother.git
+cd Voice-Brother
+xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet
+```
+
+首次启动时 Qwen3-ASR 模型会自动下载(0.6B 约 680 MB,1.7B 约 2.5 GB),之后命中本地缓存。引导页会带你完成下面三项 macOS 权限。
+
+| 权限 | 用途 |
+| :--- | :--- |
+| **辅助功能** | 监听全局快捷键、模拟按键与鼠标点击 |
+| **麦克风** | 录音 |
+| **屏幕录制** | 采集系统音频(会议纪要功能) |
+
+---
 
 ## 功能
 
 ### 语音输入
 
-- **按住即录**：按住触发键（默认右 Command）开始录音，松开自动识别并输入文字；按 ESC 随时取消本次录音
-- **灵活触发**：除标准修饰键外，支持鼠标侧键（如 Logitech 后退/前进键）作为触发键，游戏/绘图场景更顺手
-- **多引擎 ASR**：默认 Qwen3-ASR 本地推理（MLX），也可切换 Apple Speech 或火山引擎云端识别
-- **多语言识别**：支持中文、英文、日语，语音输入和会议转写分别可配置语言
-- **AI 转写润色**：识别完成后可选 LLM 润色，内置 5 种预设风格（书面化、小红书、公众号、技术写作、正式邮件），也支持自定义 prompt——说口语也能输出成品文字
-- **文字后处理**：语气词过滤（嗯、呃、额等）、自定义替换规则、热词增强
-- **剪贴板保护**：粘贴前后自动保存和恢复剪贴板内容
-- **空格重定位**：录音中按空格可在鼠标处点击，切换输入位置
+| 功能 | 说明 |
+| :--- | :--- |
+| **按住即录** | 按住触发键(默认右 ⌘)录音,松开自动识别并输入;录音中按 ESC 取消 |
+| **鼠标侧键触发** | 触发键支持鼠标侧向按键,不必长按键盘——双手不离鼠标也能语音输入 |
+| **3 种 ASR 引擎** | 默认 Qwen3-ASR 本地推理(MLX);也可切换 Apple Speech 或火山引擎云端 |
+| **可选模型档位** | 0.6B 求快、1.7B 求准——按你的电脑性能挑 |
+| **热词增强** | 喂入专业术语、常用词,识别更准 |
+| **有序替换规则** | 固定的硬替换,把识别结果改写成你要的写法 |
+| **LLM 润色** | 内置 5 种风格(书面化、小红书、公众号、技术写作、正式邮件)外加自定义 prompt |
+| **语气词过滤** | 自动剥掉"嗯、呃、额"等口水词 |
+| **剪贴板保护** | 每次粘贴前后自动保存并恢复剪贴板内容 |
 
-### 会议纪要
+### 会议纪要与系统级录音
 
-- **快速启动**：同时按住左右 Command 键 0.5 秒即可开始/结束会议录制，无需切回 App
-- 同时录制系统音频和麦克风，自动分段转写
-- 输出带时间戳的 Markdown 文件
-- **独立 ASR 模型**：语音输入用 0.6B 追求快响应，会议转写用 1.7B 追求高精度，互不干扰
-- 可选屏幕录制（.mov，含混合音频），支持原画 / HD / SD 三档画质
-- 支持切换不同 ASR 模型重新转写
+| 功能 | 说明 |
+| :--- | :--- |
+| **双 ⌘ 启动** | 同时按住左右 ⌘ 键 0.5 秒即可开始/结束,无需切回 App |
+| **系统级录音** | 同时录系统音频与麦克风——Zoom、腾讯会议、微信语音/视频通话,无论用哪个都能录 |
+| **自动分段转写** | 录音自动分段并转写,产出带时间戳的 `.md` 纪要 |
+| **独立模型** | 语音输入用 0.6B 求快、会议转写用 1.7B 求准——两个实例完全独立 |
+| **可选屏幕录制** | 可同时录 `.mov` 屏幕画面,支持原画 / HD / SD 三档画质 |
+| **重新转写** | 对已完成的录音切换 ASR 模型重跑 |
 
-### LLM 集成
+### LLM 集成——9 家供应商,国内外通吃
 
-内置 9+ 主流 LLM 供应商，国内外通吃：
+| 分类 | 供应商 |
+| :--- | :--- |
+| **国内** | 智谱 · DeepSeek · 豆包 · Kimi · Z.AI |
+| **海外** | OpenAI · Claude (Anthropic) · OpenRouter |
+| **本地** | Ollama |
 
-| 分类 | 供应商 | 默认模型 |
-|------|--------|---------|
-| 海外 | OpenAI | gpt-4o-mini |
-| 海外 | Claude (Anthropic) | claude-sonnet-4-6 |
-| 海外 | OpenRouter | gemini-2.0-flash |
-| 国内 | 智谱 | glm-4-flash |
-| 国内 | DeepSeek | deepseek-chat |
-| 国内 | 豆包 (字节跳动) | doubao-1-5-pro-32k |
-| 国内 | Kimi (月之暗面) | moonshot-v1-8k |
-| 国内 | Z.AI (智谱订阅) | glm-5-turbo |
-| 本地 | Ollama | qwen2.5:7b |
+每个供应商都有一键**连接测试**,所有 API Key 均存于系统 **Keychain**——绝不明文落盘。同一套 LLM 层同时服务于语音润色和会议摘要,两者可分别配置。
 
-- LLM 同时服务于**语音润色**和**会议摘要**，可分别配置不同供应商和模型
-- 每个供应商提供**连接测试**按钮，填入 API Key 后一键验证连通性
-- 所有 API Key 均安全存储于系统 **Keychain**
+> 此外还有:菜单栏常驻 + 全局快捷键、实时波形录音浮窗、可搜索的转写历史与关键词分析、按功能分别设置自动清理、以及一个数据流向透明视图——本地处理与云端调用一目了然。
 
-### 其他
+---
 
-- Glassmorphism 毛玻璃 UI 风格
-- 菜单栏常驻，全局快捷键
-- 录音浮窗实时波形动画
-- 转写历史记录，关键词分析；语音与会议可分别配置自动清理月数
-- 引导式权限配置（辅助功能、麦克风、屏幕录制）
-- About 页数据流向透明视图，本地处理与云端调用一目了然
+## 工作原理
 
-## 技术栈
-
-- **Swift / SwiftUI** — macOS 14+ 原生应用
-- **MLX** — Apple Silicon 上的机器学习推理框架
-- **Qwen3-ASR** — 阿里通义语音识别模型（0.6B / 1.7B）
-- **speech-swift** — MLX 语音推理封装
-- **ScreenCaptureKit** — 系统音频采集
-- **CGEventTap** — 全局键盘/鼠标事件监听与模拟
-- **SQLite** — 历史记录持久化
-
-## 架构
-
-```
-VoiceBrother/
-├── VoiceBrotherApp.swift              # App 入口
-├── Backend/
-│   ├── Voice/                         # 语音输入引擎
-│   │   ├── VoiceService.swift         # 核心录音→识别→输入流程
-│   │   ├── QwenASREngine.swift        # Qwen3-ASR (MLX)
-│   │   ├── AppleASREngine.swift       # Apple Speech
-│   │   ├── VolcanoASREngine.swift     # 火山引擎 Seed ASR 2.0
-│   │   ├── KeyboardListener.swift     # 全局键盘事件
-│   │   ├── TextInjector.swift         # 剪贴板→模拟粘贴
-│   │   ├── TextProcessor.swift        # 语气词过滤 + 替换规则
-│   │   ├── FillerRemover.swift        # 语气词清理
-│   │   ├── ITNProcessor.swift         # 逆文本正则化（数字、标点）
-│   │   ├── LLMClient.swift            # LLM 文本润色（OpenAI 兼容 / Claude）
-│   │   ├── FocusObserver.swift        # 前台应用焦点监听
-│   │   └── MLXMemoryGovernor.swift    # MLX 内存治理
-│   ├── Meeting/                       # 会议纪要
-│   │   ├── MeetingService.swift       # 会议全流程管理
-│   │   ├── MeetingSummarizer.swift    # LLM 摘要生成
-│   │   ├── MeetingScreenRecorder.swift # 屏幕录制
-│   │   ├── MeetingRetranscriber.swift  # 重新转写
-│   │   └── MeetingRetranscribeLauncher.swift
-│   └── Services/                      # 基础服务
-│       ├── ConfigManager.swift        # 配置持久化
-│       ├── HistoryManager.swift       # 历史记录 (SQLite)
-│       ├── PermissionManager.swift    # 权限管理
-│       ├── KeywordAnalyzer.swift      # 关键词分析
-│       └── KeychainStore.swift        # 密钥安全存储
-├── Frontend/
-│   ├── MainWindow.swift               # 主窗口（两栏布局）
-│   ├── MenuBarController.swift        # 菜单栏控制
-│   ├── OnboardingView.swift           # 引导页
-│   ├── Components/                    # UI 组件
-│   │   ├── RecordingOverlayPanel.swift # 录音浮窗
-│   │   ├── RecordingWaveformView.swift # 波形动画
-│   │   ├── AppLogoView.swift
-│   │   ├── BrandGlyphs.swift
-│   │   ├── CodexBadge.swift / CodexButtonStyles.swift
-│   │   ├── ColorExtension.swift       # 自定义色板
-│   │   ├── CustomToggleStyle.swift
-│   │   ├── FlowLayout.swift / WordCloudView.swift
-│   │   ├── LLMConfigCard.swift
-│   │   ├── MonoTextExtension.swift
-│   │   ├── SectionHeader.swift / Spacing.swift
-│   │   ├── StatusBarIcon.swift
-│   │   └── VisualEffectView.swift / WindowCornerRadius.swift
-│   └── Tabs/                          # 设置页面
-│       ├── SettingsTab.swift          # 通用设置
-│       ├── VoiceTab.swift             # 语音设置
-│       ├── HistoryTab.swift           # 历史记录
-│       ├── MeetingTab.swift           # 会议设置
-│       ├── AboutTab.swift             # 关于
-│       └── Sections/                  # 设置子模块
-│           ├── GeneralSettingsSection.swift
-│           ├── VoiceSettingsSection.swift
-│           ├── MeetingSettingsSection.swift
-│           └── PermissionWarningSection.swift
-└── Shared/
-    ├── Protocols.swift                # 前后端协议定义
-    ├── Types.swift                    # 共享类型（枚举、模型）
-    ├── AppConfig.swift                # 配置模型
-    ├── ThemeManager.swift             # 主题管理
-    └── DebugLog.swift                 # 日志工具
+```mermaid
+graph LR
+    A[按住快捷键 / 鼠标侧键] --> B[录音]
+    B --> C[Qwen3-ASR · MLX · 本机推理]
+    C --> D[语气词过滤 + 热词 + 替换规则]
+    D --> E{是否 LLM 润色}
+    E -- 是 --> F[LLM 重写]
+    F --> G[粘贴到光标处]
+    E -- 否 --> G
 ```
 
-## 构建
+**1. 捕获**——`CGEventTap` 全局监听触发键(键盘修饰键或鼠标侧键),按下开始录音,松开停止。
+**2. 转写**——音频送进运行在 Apple Silicon 上、经 MLX 跑的 Qwen3-ASR 模型。除非你明确选了云端引擎,否则数据不出本机。
+**3. 加工**——剥掉语气词,套用热词与你的有序替换规则,并在你开启时由 LLM 把文字重写成指定风格。
+**4. 注入**——结果经一次模拟粘贴落到光标处,粘贴前后保存并恢复剪贴板。
 
-需要 macOS 14+ 和 Xcode 15+。
+会议模式跑的是同一条流水线,但换用第二个更大的模型,经 `ScreenCaptureKit` 采集系统音频,把结果写成带时间戳的 Markdown 而不是输入到光标。
 
-```bash
-# 克隆仓库
-git clone https://github.com/Zane456/Voice-Brother.git
-cd Voice-Brother
+技术栈 **Swift · SwiftUI · MLX · Qwen3-ASR · ScreenCaptureKit · CGEventTap · SQLite**,采用三层架构——共享协议层、语音/会议/基础服务的后端引擎、SwiftUI 前端——让界面与推理后端彻底解耦。
 
-# 构建
-xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet
-
-# 或直接用 Xcode 打开
-open VoiceBrother.xcodeproj
-```
-
-首次启动时 Qwen3-ASR 模型会自动下载（0.6B 约 680MB，1.7B 约 2.5GB），之后命中本地缓存。
-
-## 权限
-
-Voice Brother 需要以下 macOS 权限：
-
-| 权限 | 用途 |
-|------|------|
-| 辅助功能 (Accessibility) | 监听全局键盘事件、模拟按键和鼠标点击 |
-| 麦克风 (Microphone) | 录音 |
-| 屏幕录制 (Screen Recording) | 采集系统音频（会议纪要功能） |
-
-首次启动会有引导页面帮助配置。
+---
 
 ## 致谢
 
-- [mlx-swift](https://github.com/ml-explore/mlx-swift) — Apple MLX 的 Swift 绑定
-- [speech-swift](https://github.com/anthropics/speech-swift) — 基于 MLX 的语音识别库
-- [swift-huggingface](https://github.com/huggingface/swift-huggingface) — HuggingFace 模型下载
+Voice Brother 站在 [mlx-swift](https://github.com/ml-explore/mlx-swift)、`speech-swift` MLX 语音库,以及阿里通义 Qwen3-ASR 模型之上。
 
-## License
+## 许可证
 
-本项目采用 **[PolyForm Noncommercial License 1.0.0](LICENSE)** —— Source-Available（源码可见）协议。
+采用 **PolyForm Noncommercial License 1.0.0**——可免费用于任何**非商业**用途,允许使用、修改、分享。详见 [LICENSE](LICENSE)。
 
-你**可以**：查看源码、修改、用于学习/研究/个人项目、基于本项目二次创作并分发。
-你**不可以**：将本项目或其衍生作品用于任何商业用途。商业授权请联系作者：[zz302179383@gmail.com](mailto:zz302179383@gmail.com)。
+⭐ 如果 Voice Brother 帮你省下了一些打字,欢迎给个 star。
 
-任何分发或衍生作品**必须保留**以下署名（来自 LICENSE 文件的 `Required Notice`）：
+---
 
-> Required Notice: Copyright (c) 2026 Zane456 — Voice Brother (https://github.com/Zane456/Voice-Bubble)
+<div align="center">
+
+> *「按住说话,松开输入。你的声音不离开这台 Mac。」*
+
+<br>
+
+**Zane456** — Voice Brother 作者
+
+| 平台 | 链接 |
+| :--- | :--- |
+| 𝕏 Twitter | [@ZaneZaneZzZZ](https://x.com/ZaneZaneZzZZ) |
+| 📕 小红书 | [主页](https://www.xiaohongshu.com/user/profile/Zz302179383) |
+| 💻 GitHub | [@Zane456](https://github.com/Zane456) |
+
+<br>
+
+PolyForm Noncommercial License 1.0.0 © [Zane456](https://github.com/Zane456)
+
+</div>
