@@ -1,5 +1,9 @@
 # Voice Brother
 
+<p align="center">
+  <img src="screenshot.png" alt="Voice Brother Screenshots" width="800">
+</p>
+
 macOS 原生语音输入工具。按住快捷键说话，松开后文字自动输入到光标位置。默认本地推理，也支持云端引擎。
 
 ## 功能
