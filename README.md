@@ -1,6 +1,6 @@
 # Voice Brother
 
-macOS 原生语音输入工具。按住快捷键说话，松开后文字自动输入到光标位置。全程本地推理，无需联网。
+macOS 原生语音输入工具。按住快捷键说话，松开后文字自动输入到光标位置。默认本地推理，也支持云端引擎。
 
 ## 功能
 
@@ -8,7 +8,7 @@ macOS 原生语音输入工具。按住快捷键说话，松开后文字自动�
 
 - **按住即录**：按住触发键（默认右 Command）开始录音，松开自动识别并输入文字
 - **本地 ASR**：基于 Qwen3-ASR 模型，通过 MLX 在 Apple Silicon 上本地推理
-- **文字后处理**：语气词过滤（嗯、呃、额等）、自定义替换规则、热词增强
+- **文字后处理**：语气词过滤（嗯、呃、额等）、自定义替换规则、热词增强、LLM 润色
 - **剪贴板保护**：粘贴前后自动保存和恢复剪贴板内容
 - **空格重定位**：录音中按空格可在鼠标处点击，切换输入位置
 
@@ -16,16 +16,17 @@ macOS 原生语音输入工具。按住快捷键说话，松开后文字自动�
 
 - 同时录制系统音频和麦克风，自动分段转写
 - 输出带时间戳的 Markdown 文件
-- 支持 LLM 摘要生成（可配置 OpenAI / Z.AI 等 provider）
-- 可选屏幕录制
+- 支持 LLM 摘要生成（OpenAI、Claude、DeepSeek、OpenRouter、智谱、Z.AI、豆包、Kimi、Ollama 等）
+- 可选屏幕录制（.mov，含混合音频）
+- 支持切换不同 ASR 模型重新转写
 
-### 多引擎支持
+### 多引擎 ASR
 
 | 引擎 | 模型 | 特点 |
 |------|------|------|
-| Qwen3-ASR (MLX) | 0.6B / 1.7B | 本地推理，隐私优先 |
+| Qwen3-ASR (MLX) | 0.6B / 1.7B | 本地推理，隐私优先，默认引擎 |
 | Apple Speech | 系统内置 | 零下载，即时可用 |
-| Volcano ASR | 云端 | 高精度 |
+| 火山引擎 Seed ASR 2.0 | 云端 | WebSocket 流式，高精度 |
 
 ### 其他
 
@@ -49,39 +50,63 @@ macOS 原生语音输入工具。按住快捷键说话，松开后文字自动�
 
 ```
 VoiceBrother/
-├── VoiceBrotherApp.swift          # App 入口
+├── VoiceBrotherApp.swift              # App 入口
 ├── Backend/
-│   ├── Voice/                     # 语音输入引擎
-│   │   ├── VoiceService.swift     # 核心录音→识别→输入流程
-│   │   ├── QwenASREngine.swift    # Qwen3-ASR (MLX)
-│   │   ├── AppleASREngine.swift   # Apple Speech
-│   │   ├── VolcanoASREngine.swift # Volcano 云端 ASR
-│   │   ├── KeyboardListener.swift # 全局键盘事件
-│   │   ├── TextInjector.swift     # 剪贴板→模拟粘贴
-│   │   ├── TextProcessor.swift    # 语气词过滤 + 替换规则
-│   │   └── MLXMemoryGovernor.swift # MLX 显存治理
-│   ├── Meeting/                   # 会议纪要
-│   │   ├── MeetingService.swift   # 会议全流程管理
-│   │   ├── MeetingSummarizer.swift # LLM 摘要
-│   │   └── MeetingScreenRecorder.swift
-│   └── Services/                  # 基础服务
-│       ├── ConfigManager.swift    # 配置持久化
-│       ├── HistoryManager.swift   # 历史记录 (SQLite)
-│       └── PermissionManager.swift
+│   ├── Voice/                         # 语音输入引擎
+│   │   ├── VoiceService.swift         # 核心录音→识别→输入流程
+│   │   ├── QwenASREngine.swift        # Qwen3-ASR (MLX)
+│   │   ├── AppleASREngine.swift       # Apple Speech
+│   │   ├── VolcanoASREngine.swift     # 火山引擎 Seed ASR 2.0
+│   │   ├── KeyboardListener.swift     # 全局键盘事件
+│   │   ├── TextInjector.swift         # 剪贴板→模拟粘贴
+│   │   ├── TextProcessor.swift        # 语气词过滤 + 替换规则
+│   │   ├── FillerRemover.swift        # 语气词清理
+│   │   ├── ITNProcessor.swift         # 逆文本正则化（数字、标点）
+│   │   ├── LLMClient.swift            # LLM 文本润色（OpenAI 兼容 / Claude）
+│   │   ├── FocusObserver.swift        # 前台应用焦点监听
+│   │   └── MLXMemoryGovernor.swift    # MLX 内存治理
+│   ├── Meeting/                       # 会议纪要
+│   │   ├── MeetingService.swift       # 会议全流程管理
+│   │   ├── MeetingSummarizer.swift    # LLM 摘要生成
+│   │   ├── MeetingScreenRecorder.swift # 屏幕录制
+│   │   ├── MeetingRetranscriber.swift  # 重新转写
+│   │   └── MeetingRetranscribeLauncher.swift
+│   └── Services/                      # 基础服务
+│       ├── ConfigManager.swift        # 配置持久化
+│       ├── HistoryManager.swift       # 历史记录 (SQLite)
+│       ├── PermissionManager.swift    # 权限管理
+│       ├── KeywordAnalyzer.swift      # 关键词分析
+│       └── KeychainStore.swift        # 密钥安全存储
 ├── Frontend/
-│   ├── MainWindow.swift           # 主窗口（两栏布局）
-│   ├── MenuBarController.swift    # 菜单栏控制
-│   ├── Components/                # UI 组件
-│   └── Tabs/                      # 设置页面
-│       ├── SettingsTab.swift
-│       ├── VoiceTab.swift
-│       ├── HistoryTab.swift
-│       ├── MeetingTab.swift
-│       └── AboutTab.swift
+│   ├── MainWindow.swift               # 主窗口（两栏布局）
+│   ├── MenuBarController.swift        # 菜单栏控制
+│   ├── OnboardingView.swift           # 引导页
+│   ├── Components/                    # UI 组件
+│   │   ├── RecordingOverlayPanel.swift # 录音浮窗
+│   │   ├── RecordingWaveformView.swift # 波形动画
+│   │   ├── AppLogoView.swift
+│   │   ├── BrandGlyphs.swift
+│   │   ├── CodexBadge.swift / CodexButtonStyles.swift
+│   │   ├── ColorExtension.swift       # 自定义色板
+│   │   ├── CustomToggleStyle.swift
+│   │   ├── FlowLayout.swift / WordCloudView.swift
+│   │   ├── LLMConfigCard.swift
+│   │   ├── SectionHeader.swift / Spacing.swift
+│   │   ├── StatusBarIcon.swift
+│   │   └── VisualEffectView.swift / WindowCornerRadius.swift
+│   └── Tabs/                          # 设置页面
+│       ├── SettingsTab.swift          # 通用设置
+│       ├── VoiceTab.swift             # 语音设置
+│       ├── HistoryTab.swift           # 历史记录
+│       ├── MeetingTab.swift           # 会议设置
+│       ├── AboutTab.swift             # 关于
+│       └── Sections/                  # 设置子模块
 └── Shared/
-    ├── Protocols.swift            # 前后端协议定义
-    ├── Types.swift                # 共享类型
-    └── AppConfig.swift            # 配置模型
+    ├── Protocols.swift                # 前后端协议定义
+    ├── Types.swift                    # 共享类型（枚举、模型）
+    ├── AppConfig.swift                # 配置模型
+    ├── ThemeManager.swift             # 主题管理
+    └── DebugLog.swift                 # 日志工具
 ```
 
 ## 构建
@@ -116,9 +141,9 @@ Voice Brother 需要以下 macOS 权限：
 
 ## 致谢
 
-- [Voice Aura](https://github.com/) — Python 版前身，功能设计的原型
 - [mlx-swift](https://github.com/ml-explore/mlx-swift) — Apple MLX 的 Swift 绑定
 - [speech-swift](https://github.com/anthropics/speech-swift) — 基于 MLX 的语音识别库
+- [swift-huggingface](https://github.com/huggingface/swift-huggingface) — HuggingFace 模型下载
 
 ## License
 
