@@ -210,7 +210,7 @@ struct MainWindow: View {
             Image(systemName: "arrow.clockwise.circle.fill")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(theme.accent)
-            Text("屏幕录制权限已授予，需要重启 Voice Bubble 才能生效")
+            Text("屏幕录制权限已授予，需要重启 Voice Brother 才能生效")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(theme.textPrimary)
             Spacer()

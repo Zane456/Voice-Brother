@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Package Voice Bubble for a friend on an Apple Silicon Mac.
+# Package Voice Brother for a friend on an Apple Silicon Mac.
 #
-# Produces:  dist/VoiceBubble-v<VERSION>/
-#   ├── VoiceBubble.app               (arm64, ad-hoc signed, quarantine stripped)
+# Produces:  dist/VoiceBrother-v<VERSION>/
+#   ├── VoiceBrother.app               (arm64, ad-hoc signed, quarantine stripped)
 #   ├── models/                       (0.6B ASR + VAD, pre-downloaded)
 #   ├── 安装.command                   (double-click to copy app + models into place)
 #   └── 使用说明.txt
@@ -23,24 +23,24 @@ cd "$PROJECT_DIR"
 
 echo "==> 1/6  清理旧 dist"
 rm -rf dist
-OUT="dist/VoiceBubble-v${VERSION}"
+OUT="dist/VoiceBrother-v${VERSION}"
 mkdir -p "$OUT"
 
 # ---------- Build Release ----------
 echo "==> 2/6  构建 Release 版本"
 xcodebuild build \
-    -project VoiceBubble.xcodeproj \
-    -scheme VoiceBubble \
+    -project VoiceBrother.xcodeproj \
+    -scheme VoiceBrother \
     -configuration Release \
     -quiet
 
 REL_APP_SRC=$(find "$HOME/Library/Developer/Xcode/DerivedData" \
     -maxdepth 5 \
-    -path "*/Build/Products/Release/VoiceBubble.app" \
+    -path "*/Build/Products/Release/VoiceBrother.app" \
     -print -quit)
 
 if [[ -z "$REL_APP_SRC" ]]; then
-    echo "找不到 Release 版本的 VoiceBubble.app" >&2
+    echo "找不到 Release 版本的 VoiceBrother.app" >&2
     exit 1
 fi
 echo "    找到: $REL_APP_SRC"
@@ -48,7 +48,7 @@ echo "    找到: $REL_APP_SRC"
 # ---------- Copy + clean app ----------
 echo "==> 3/6  复制 app 并剥掉 quarantine / 重新 ad-hoc 签名"
 cp -R "$REL_APP_SRC" "$OUT/"
-APP_DST="$OUT/VoiceBubble.app"
+APP_DST="$OUT/VoiceBrother.app"
 
 # Remove any quarantine xattr Xcode may have inherited (harmless if absent).
 xattr -dr com.apple.quarantine "$APP_DST" 2>/dev/null || true
@@ -96,7 +96,7 @@ done
 echo "==> 5/6  生成安装脚本和使用说明"
 cat > "$OUT/安装.command" <<'INSTALLER'
 #!/usr/bin/env bash
-# Double-click this file to install Voice Bubble.
+# Double-click this file to install Voice Brother.
 # First time: right-click -> 打开 -> 打开  (to bypass Gatekeeper on the .command).
 
 set -e
@@ -104,18 +104,18 @@ cd "$(dirname "$0")"
 
 echo ""
 echo "============================================"
-echo "  Voice Bubble 一键安装"
+echo "  Voice Brother 一键安装"
 echo "============================================"
 echo ""
 
 # 1. Copy app to /Applications
-if [[ -d "/Applications/VoiceBubble.app" ]]; then
-    echo "→ 检测到已有 VoiceBubble.app，覆盖中..."
-    rm -rf "/Applications/VoiceBubble.app"
+if [[ -d "/Applications/VoiceBrother.app" ]]; then
+    echo "→ 检测到已有 VoiceBrother.app，覆盖中..."
+    rm -rf "/Applications/VoiceBrother.app"
 fi
-echo "→ 正在把 VoiceBubble.app 复制到 /Applications/"
-cp -R "VoiceBubble.app" "/Applications/"
-xattr -dr com.apple.quarantine "/Applications/VoiceBubble.app" 2>/dev/null || true
+echo "→ 正在把 VoiceBrother.app 复制到 /Applications/"
+cp -R "VoiceBrother.app" "/Applications/"
+xattr -dr com.apple.quarantine "/Applications/VoiceBrother.app" 2>/dev/null || true
 
 # 2. Copy models to ~/.cache/huggingface/hub
 HF_DIR="$HOME/.cache/huggingface/hub"
@@ -133,9 +133,9 @@ done
 echo ""
 echo "✓ 安装完成。"
 echo ""
-echo "  正在打开 Voice Bubble..."
+echo "  正在打开 Voice Brother..."
 echo ""
-open "/Applications/VoiceBubble.app"
+open "/Applications/VoiceBrother.app"
 
 # Keep terminal open so user can read the output.
 sleep 1
@@ -145,7 +145,7 @@ INSTALLER
 chmod +x "$OUT/安装.command"
 
 cat > "$OUT/使用说明.txt" <<'README'
-Voice Bubble — 使用说明
+Voice Brother — 使用说明
 ==============================
 
 硬件要求：Apple Silicon Mac（M1/M2/M3/M4 芯片），macOS 14 或更新版本。
@@ -161,7 +161,7 @@ Voice Bubble — 使用说明
    （第一次必须右键打开，之后就不会再弹了。）
 
 3. 终端会自动把 app 装到 /应用程序/，把模型放到缓存目录，
-   然后自动启动 Voice Bubble。
+   然后自动启动 Voice Brother。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 首次启动 — 授权说明
@@ -171,7 +171,7 @@ Voice Bubble — 使用说明
 
   1. 辅助功能（用于全局快捷键监听）
      弹窗出现后会自动跳到系统设置，
-     在「隐私与安全 → 辅助功能」里打开 Voice Bubble 开关。
+     在「隐私与安全 → 辅助功能」里打开 Voice Brother 开关。
 
   2. 麦克风（用于录音）
      弹「好」或「允许」。
@@ -200,7 +200,7 @@ API Key 保存在你 Mac 的 Keychain 中，不会被上传。
 出问题？
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  • 双击 VoiceBubble.app 被 Gatekeeper 拦住 →
+  • 双击 VoiceBrother.app 被 Gatekeeper 拦住 →
     右键点图标 → 打开 → 再点一次打开。
 
   • 首次启动模型加载慢 →
@@ -218,9 +218,9 @@ README
 # ---------- Zip ----------
 echo "==> 6/6  打包 zip"
 cd dist
-ZIP_NAME="VoiceBubble-v${VERSION}.zip"
+ZIP_NAME="VoiceBrother-v${VERSION}.zip"
 rm -f "$ZIP_NAME"
-zip -rq "$ZIP_NAME" "VoiceBubble-v${VERSION}"
+zip -rq "$ZIP_NAME" "VoiceBrother-v${VERSION}"
 cd ..
 
 TOTAL_SIZE=$(du -sh "dist/$ZIP_NAME" | awk '{print $1}')

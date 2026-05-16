@@ -1,4 +1,4 @@
-# Voice Bubble - 项目指南
+# Voice Brother - 项目指南
 
 > macOS 原生语音输入应用。Swift + SwiftUI + MLX，按住说话，松开输入。
 
@@ -122,14 +122,14 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 6. **改完后必须自动构建并重启应用**（用户不使用 Xcode，所有操作由命令行完成）：
    ```bash
    # 1. 构建
-   cd "/Users/zhangzheng/IDE project/Voice Bubble"
-   xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
+   cd "/Users/zhangzheng/IDE project/Voice Brother"
+   xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet
 
    # 2. 关闭正在运行的旧实例
-   pkill -x "VoiceBubble" 2>/dev/null || true
+   pkill -x "VoiceBrother" 2>/dev/null || true
 
    # 3. 启动新构建的应用
-   open "/Users/zhangzheng/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
+   open "/Users/zhangzheng/Library/Developer/Xcode/DerivedData/VoiceBrother-dopowvwzswipvocptpcwzjpqinvh/Build/Products/Debug/VoiceBrother.app"
    ```
    **每次修改代码后都必须执行这三步**，不要只构建不重启，也不要让用户手动去操作。
 
@@ -137,7 +137,7 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 
 ### speech-swift `HuggingFaceDownloader.downloadWeights` 加 cache-fast-path
 
-**位置**：`~/Library/Developer/Xcode/DerivedData/VoiceBubble-*/SourcePackages/checkouts/speech-swift/Sources/AudioCommon/HuggingFaceDownloader.swift`
+**位置**：`~/Library/Developer/Xcode/DerivedData/VoiceBrother-*/SourcePackages/checkouts/speech-swift/Sources/AudioCommon/HuggingFaceDownloader.swift`
 
 **为什么打这个补丁**：原版每次启动都调 `hub.snapshot()`，命中缓存的情况下仍然向 HuggingFace 发 6+ 次 HEAD 请求验证 etag。国内网络下额外多花 5-30 秒，体感"模型启动太久"。
 
@@ -148,11 +148,11 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 **判断完整性的依据**：HF metadata 文件只有在下载完整成功且写入 commit_hash/etag 后才会生成，所以它存在 ⇔ 文件不是半成品。
 
 **何时需要重打**：
-- 删除 `~/Library/Developer/Xcode/DerivedData/VoiceBubble-*` 之后
+- 删除 `~/Library/Developer/Xcode/DerivedData/VoiceBrother-*` 之后
 - `Package.resolved` 里的 speech-swift 版本变更后（SPM 会重新 fetch）
 - 任何触发 SPM resolve 的操作之后
 
-**重打步骤**：在补丁文件内搜 `VoiceBubble local patch` 找原位置，参照 git diff 重新粘贴两段。
+**重打步骤**：在补丁文件内搜 `VoiceBrother local patch` 找原位置，参照 git diff 重新粘贴两段。
 
 **根治方向**：往 speech-swift 上游提 PR 加 `localFilesOnly: Bool` 参数，命中缓存时跳过 hub.snapshot。
 
@@ -170,7 +170,7 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 **症状**：长时间使用后进程 RSS 涨到 20+ GB，最终触发 swap 颠簸。
 **根因**：MLX 默认 `cacheLimit = memoryLimit`（32GB Mac 上几乎等于无限制）。每次 `transcribe` 的音频长度不同 → 中间张量/KV-cache buffer 形状不同 → MLX 的 buffer 池**无法复用**变形 buffer，全部缓存沉积。文档原话："by the end of a long inference run, you may see several GB of cached memory ... if cache memory is unconstrained"。
 **修复**：新增 `Backend/Voice/MLXMemoryGovernor.swift`，启动时 `MLX.Memory.cacheLimit = 256 MB`，每次转写后调 `Memory.clearCache()`。接入点：
-- `VoiceBubbleApp.init()` 调 `configure()`
+- `VoiceBrotherApp.init()` 调 `configure()`
 - `VoiceService.transcribeAndInject` / `runPreviewTranscription`、`MeetingService.transcribeSegment`、`MeetingRetranscriber` 在转写完成后调 `reclaim()`
 - 调 `snapshotDescription()` 写日志便于回归监控
 

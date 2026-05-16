@@ -1369,7 +1369,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         return parts.joined(separator: "。") + "。"
     }
 
-    /// Captures the frontmost non-VoiceBubble app's localized name. Returns nil
+    /// Captures the frontmost non-VoiceBrother app's localized name. Returns nil
     /// when the frontmost app is our own process (panel focus edge case).
     static func captureFrontmostAppName() -> String? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }

@@ -3,7 +3,7 @@ import Foundation
 
 /// Parses `--retranscribe` CLI arguments and dispatches the offline
 /// re-transcription pipeline. Used as an early-exit branch in
-/// VoiceBubbleApp.init so the full SwiftUI app never starts.
+/// VoiceBrotherApp.init so the full SwiftUI app never starts.
 enum MeetingRetranscribeLauncher {
 
     struct Args {

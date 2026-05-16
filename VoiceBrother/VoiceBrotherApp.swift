@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct VoiceBubbleApp: App {
+struct VoiceBrotherApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     let configManager: ConfigManager
@@ -15,7 +15,7 @@ struct VoiceBubbleApp: App {
         // chosen language and write a fresh markdown alongside. Used to
         // recover meetings that were captured under the wrong language hint.
         // Usage:
-        //   VoiceBubble --retranscribe <wav> <language> <output_md> [model_id]
+        //   VoiceBrother --retranscribe <wav> <language> <output_md> [model_id]
         if let opts = MeetingRetranscribeLauncher.parseArgs(CommandLine.arguments) {
             MeetingRetranscribeLauncher.runAndExit(options: opts)
         }
@@ -64,7 +64,7 @@ struct VoiceBubbleApp: App {
         .defaultSize(width: 672, height: 800)
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("关于 Voice Bubble") {
+                Button("关于 Voice Brother") {
                     NSApp.orderFrontStandardAboutPanel()
                 }
             }

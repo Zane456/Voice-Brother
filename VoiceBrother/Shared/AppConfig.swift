@@ -164,7 +164,7 @@ final class AppConfig: ObservableObject {
     static let defaultHistoryRetentionMonths = 2
     static let defaultMeetingRetentionMonths = 2
     static let defaultMeetingSavePath: String = {
-        let path = NSHomeDirectory() + "/Documents/Voice Bubble/"
+        let path = NSHomeDirectory() + "/Documents/Voice Brother/"
         try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
         return path
     }()
@@ -203,7 +203,7 @@ final class AppConfig: ObservableObject {
     // MARK: - Persistence
     private static let configURL: URL = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("VoiceBubble", isDirectory: true)
+        let dir = appSupport.appendingPathComponent("VoiceBrother", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("config.json")
     }()
@@ -413,7 +413,7 @@ final class AppConfig: ObservableObject {
 
     /// Write each provider's API key to the Keychain and return a copy of the
     /// credentials map with `apiKey` blanked out, so only baseURL/model end up
-    /// in UserDefaults. This stops `defaults read com.voicebubble.app` from
+    /// in UserDefaults. This stops `defaults read com.voicebrother.app` from
     /// leaking live API keys via screen recordings or backups.
     private static func scrubKeysForDisk(
         _ creds: [String: ProviderCredentials],

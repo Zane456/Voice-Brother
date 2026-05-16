@@ -1,10 +1,10 @@
-# Voice Bubble - 项目文档
+# Voice Brother - 项目文档
 
-> 本文档是 Voice Bubble 的完整需求定义。任何 AI 助手在参与本项目时，应首先阅读此文档以获取完整上下文。
+> 本文档是 Voice Brother 的完整需求定义。任何 AI 助手在参与本项目时，应首先阅读此文档以获取完整上下文。
 
 ## 一、项目概述
 
-**Voice Bubble** 是一款 macOS 原生语音输入应用，使用 Swift/SwiftUI 构建。它是 Voice Aura（Python/Tkinter 版本）的全面重制版，核心目标不变：**按住键说话，松开后文字自动输入到光标位置**。
+**Voice Brother** 是一款 macOS 原生语音输入应用，使用 Swift/SwiftUI 构建。它是 Voice Aura（Python/Tkinter 版本）的全面重制版，核心目标不变：**按住键说话，松开后文字自动输入到光标位置**。
 
 ### 为什么重制
 
@@ -13,11 +13,11 @@ Voice Aura 使用 Python + Tkinter + PyTorch 构建，功能完整但存在以�
 - Tkinter 非原生 UI，在 macOS 上观感不够精致
 - PyTorch 模型占用大，启动慢
 
-Voice Bubble 采用 Swift + SwiftUI + MLX，实现完全原生的 macOS 应用体验。
+Voice Brother 采用 Swift + SwiftUI + MLX，实现完全原生的 macOS 应用体验。
 
 ### 前身项目参考
 
-- **Voice Aura**（Python 版）：位于 `/Users/zhangzheng/IDE project/Voice-Aura/`，所有现有功能均需在 Voice Bubble 中重现
+- **Voice Aura**（Python 版）：位于 `/Users/zhangzheng/IDE project/Voice-Aura/`，所有现有功能均需在 Voice Brother 中重现
 - **Type4Me**（joewongjc/type4me）：UI 布局参考，左侧导航栏 + 右侧内容面板的设置界面结构
 - **TypeNo**（marswaveai/TypeNo）：极简交互参考
 
@@ -442,7 +442,7 @@ Voice-Aura（Python 版）通过 `subprocess.Popen(["osascript", ...])` 调用 A
 **剪贴板竞态防护**：在步骤 5 恢复前，检查 `NSPasteboard.general.changeCount`。如果 changeCount 与步骤 2 写入后不同（说明用户或其他程序在此期间修改了剪贴板），则跳过恢复，保留用户的新内容。
 
 **对比 Python 版的改进**：
-| | Python 版 (Voice-Aura) | Swift 版 (Voice Bubble) |
+| | Python 版 (Voice-Aura) | Swift 版 (Voice Brother) |
 |---|---|---|
 | 粘贴模拟 | osascript 子进程调 AppleScript | CGEvent 直接发键盘事件 |
 | 延迟 | ~100-200ms（启动 osascript 进程） | <1ms（内存中构造事件） |
@@ -470,8 +470,8 @@ SwiftUI Window 无法实现以下特性，因此录音浮窗**必须用 AppKit N
 **不能使用 App Sandbox**——CGEventTap 与沙盒不兼容。
 
 **Info.plist 必需条目**：
-- `NSMicrophoneUsageDescription`: "Voice Bubble 需要麦克风权限来录制语音"
-- `NSScreenCaptureUsageDescription`: "Voice Bubble 需要屏幕录制权限来采集系统音频（会议纪要功能）"
+- `NSMicrophoneUsageDescription`: "Voice Brother 需要麦克风权限来录制语音"
+- `NSScreenCaptureUsageDescription`: "Voice Brother 需要屏幕录制权限来采集系统音频（会议纪要功能）"
 
 **签名与公证**：
 - 必须使用 Developer ID 证书签名（否则 CGEventTap 在 macOS 13+ 上被拒绝）
@@ -565,7 +565,7 @@ SwiftUI Window 无法实现以下特性，因此录音浮窗**必须用 AppKit N
 ### 7.2 三层结构与目录
 
 ```
-VoiceBubble/
+VoiceBrother/
 ├── Shared/                      ← 共享层：数据类型 + 协议定义
 │   ├── Types.swift              ← 枚举、结构体（两边都用）
 │   ├── AppConfig.swift          ← 配置模型
@@ -599,7 +599,7 @@ VoiceBubble/
 │   │   └── RecordingWaveformView.swift   ← 波形动画（SwiftUI，嵌入 NSPanel）
 │   └── OnboardingView.swift     ← 首次引导
 │
-└── VoiceBubbleApp.swift         ← 应用入口：创建后端实例，注入到前端
+└── VoiceBrotherApp.swift         ← 应用入口：创建后端实例，注入到前端
 ```
 
 ### 7.3 共享层：数据类型
@@ -739,7 +739,7 @@ protocol PermissionManagerProtocol: ObservableObject {
 
 ### 7.6 依赖注入（应用入口）
 
-`VoiceBubbleApp.swift`（应用入口）是唯一知道所有具体实现类的地方：
+`VoiceBrotherApp.swift`（应用入口）是唯一知道所有具体实现类的地方：
 ```
 创建 ConfigManager（具体类）
 创建 PermissionManager（具体类）
@@ -796,7 +796,7 @@ MockConfigManager: ConfigManagerProtocol
 
 所有用户设置需持久化存储，应用重启后保持。
 
-**存储方式**：UserDefaults 或 `~/Library/Application Support/VoiceBubble/config.json`（不与 Python 版共用文件）。
+**存储方式**：UserDefaults 或 `~/Library/Application Support/VoiceBrother/config.json`（不与 Python 版共用文件）。
 
 **加载逻辑**：先加载默认配置，再加载用户配置覆盖。用户配置中缺失的 key 从默认配置补齐（向前兼容，新版本增加配置项时旧配置不会报错）。
 
@@ -987,7 +987,7 @@ MeetingService 共享 Phase 1b 的 ASR 模型，因此必须等 Phase 1b 稳定�
 
 ## 十一、从 Voice Aura 迁移的完整功能清单
 
-以下是 Voice Aura 的所有功能，每一项在 Voice Bubble 中都必须实现：
+以下是 Voice Aura 的所有功能，每一项在 Voice Brother 中都必须实现：
 
 - [x] 定义需求（本文档）
 - [ ] 按住触发键录音

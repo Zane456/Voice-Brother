@@ -8,6 +8,7 @@ struct OnboardingView: View {
     @Binding var isPresented: Bool
     @State private var currentStep = 0
     @State private var refreshTimer: Timer?
+    @State private var isRelaunching = false
 
     private let totalSteps = 3
 
@@ -21,7 +22,7 @@ struct OnboardingView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                     .padding(.top, 32)
 
-                Text("欢迎使用 Voice Bubble")
+                Text("欢迎使用 Voice Brother")
                     .font(.system(size: 20, weight: .bold))
 
                 Text("首次使用需要授予以下权限")
@@ -67,7 +68,7 @@ struct OnboardingView: View {
             // Steps
             VStack(spacing: 8) {
                 stepCard(0, icon: "universalaccess", title: "辅助功能",
-                         desc: "监听全局按键事件。在系统对话框中勾选 Voice Bubble。",
+                         desc: "监听全局按键事件。在系统对话框中勾选 Voice Brother。",
                          granted: permissionManager.status.accessibility,
                          action: { permissionManager.openAccessibilitySettings() })
 
@@ -84,7 +85,7 @@ struct OnboardingView: View {
             .padding(.horizontal, 32)
             .padding(.top, 24)
 
-            Spacer()
+            Spacer(minLength: 28)
 
             // Footer
             HStack(spacing: 6) {
@@ -126,7 +127,10 @@ struct OnboardingView: View {
             .padding(.horizontal, 32)
             .padding(.bottom, 24)
         }
-        .frame(width: 480, height: 600)
+        // Width is fixed; height is left intrinsic so the sheet grows to fit
+        // its content. A hard-coded height clipped the footer button whenever
+        // the step cards expanded their descriptions.
+        .frame(width: 480)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             permissionManager.recheckAll()
@@ -144,10 +148,17 @@ struct OnboardingView: View {
         }
         .onChange(of: permissionManager.status) { newStatus in
             updateCurrentStep()
-            // Keep the sheet open if the user still needs to relaunch —
-            // auto-dismissing here would drop them onto the main window
-            // where Screen Recording silently doesn't work yet.
-            if newStatus.allGranted && !permissionManager.needsRelaunch {
+            if permissionManager.needsRelaunch {
+                // Screen Recording just flipped denied → granted. The running
+                // process still can't open capture streams until relaunch, so
+                // do it automatically instead of waiting for a button click.
+                guard !isRelaunching else { return }
+                isRelaunching = true
+                if newStatus.allGranted { configManager.onboardingDone = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    permissionManager.relaunchApp()
+                }
+            } else if newStatus.allGranted {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     configManager.onboardingDone = true
                     isPresented = false

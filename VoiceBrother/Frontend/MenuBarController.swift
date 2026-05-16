@@ -194,7 +194,7 @@ final class MenuBarController: NSObject {
 
         menu.addItem(NSMenuItem.separator())
 
-        let quitItem = NSMenuItem(title: "退出 Voice Bubble", action: #selector(quitApp), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "退出 Voice Brother", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -276,7 +276,7 @@ private struct MenuBarHeaderView: View {
                 .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Voice Bubble")
+                Text("Voice Brother")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.primary)
 

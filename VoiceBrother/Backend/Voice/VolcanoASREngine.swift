@@ -270,7 +270,7 @@ enum VolcProtocol {
         }
 
         let json: [String: Any] = [
-            "user": ["uid": "voicebubble"],
+            "user": ["uid": "voicebrother"],
             "audio": [
                 "format": "pcm",
                 "codec": "raw",

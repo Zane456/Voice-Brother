@@ -3,11 +3,11 @@ import Security
 
 /// Thin wrapper around the macOS Keychain for storing API keys.
 /// We keep secrets out of UserDefaults (which is world-readable via
-/// `defaults read com.voicebubble.app`) so that a user who shares their
+/// `defaults read com.voicebrother.app`) so that a user who shares their
 /// machine state—screen recordings, Time Machine backups, support exports—
 /// doesn't leak them.
 enum KeychainStore {
-    private static let service = "com.voicebubble.app"
+    private static let service = "com.voicebrother.app"
 
     /// Upsert a secret. Empty values delete the entry so we never store
     /// zero-length passwords that look like "configured but broken".

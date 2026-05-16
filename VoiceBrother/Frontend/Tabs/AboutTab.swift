@@ -159,7 +159,7 @@ struct AboutTab: View {
                 .frame(width: 72, height: 72)
                 .clipShape(RoundedRectangle(cornerRadius: 16))
 
-            Text("Voice Bubble")
+            Text("Voice Brother")
                 .font(.system(size: 22, weight: .bold))
 
             Text("版本 \(AboutTab.currentVersion)")

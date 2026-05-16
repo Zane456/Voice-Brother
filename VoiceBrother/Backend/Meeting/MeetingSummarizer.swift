@@ -113,40 +113,44 @@ final class MeetingSummarizer {
 
     // MARK: - Step 2: Title & Summary
 
+    /// Requests the title and the summary as two independent calls. A single
+    /// combined call forces the model into a "标题：… / 摘要…" format it
+    /// follows only unreliably (verified against GLM), so each is asked for
+    /// separately and the whole response is used as-is.
     private func titleAndSummary(cleanedText: String, client: LLMClient) async throws -> (title: String, summary: String) {
         var input = cleanedText
         if input.count > Self.summaryInputCap {
             input = String(input.prefix(Self.summaryInputCap)) + "\n\n（后续内容略）"
         }
 
-        let response = try await client.call(systemPrompt: Self.titleSummarySystemPrompt, userMessage: input)
-        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
+        let titleResponse = try await client.call(systemPrompt: Self.titleSystemPrompt, userMessage: input)
+        let summaryResponse = try await client.call(systemPrompt: Self.summarySystemPrompt, userMessage: input)
+
+        let summary = summaryResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !summary.isEmpty else {
             throw SummarizerError.emptyResponse
         }
-        return parseTitleAndSummary(trimmed)
+        return (cleanTitle(titleResponse), summary)
     }
 
-    /// Parses the `标题：…` first line out of the model's response. Falls back
-    /// to a date-based title and treats the whole response as the summary
-    /// when the model doesn't follow the format.
-    private func parseTitleAndSummary(_ raw: String) -> (title: String, summary: String) {
-        let lines = raw.components(separatedBy: "\n")
-        for (index, line) in lines.enumerated() {
-            let t = line.trimmingCharacters(in: .whitespaces)
+    /// Reduces the title response to one clean line — drops markdown, quotes
+    /// and a stray "标题：" label the model sometimes still prepends, then
+    /// truncates. Falls back to a date-based title when nothing usable
+    /// remains.
+    private func cleanTitle(_ raw: String) -> String {
+        for line in raw.components(separatedBy: "\n") {
+            var t = line.trimmingCharacters(in: CharacterSet(charactersIn: " \t*#`"))
             guard !t.isEmpty else { continue }
-            if let titleRange = t.range(of: "标题：") ?? t.range(of: "标题:") {
-                let title = String(t[titleRange.upperBound...])
-                    .trimmingCharacters(in: CharacterSet(charactersIn: " *#《》\"'「」"))
-                let summary = lines[(index + 1)...].joined(separator: "\n")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                return (title.isEmpty ? Self.fallbackTitle() : title,
-                        summary.isEmpty ? raw : summary)
+            for label in ["标题：", "标题:", "题目：", "题目:"] where t.hasPrefix(label) {
+                t = String(t.dropFirst(label.count))
+                break
             }
-            // First non-empty line isn't a title — give up parsing.
-            break
+            t = t.trimmingCharacters(in: CharacterSet(charactersIn: " *#`《》\"'「」【】"))
+            if !t.isEmpty {
+                return String(t.prefix(30))
+            }
         }
-        return (Self.fallbackTitle(), raw)
+        return Self.fallbackTitle()
     }
 
     private static func fallbackTitle() -> String {
@@ -166,15 +170,14 @@ final class MeetingSummarizer {
     只输出整理后的正文，不要任何说明或解释。
     """
 
-    private static let titleSummarySystemPrompt = """
-    下面是一段录音的整理后文本。请完成两件事：
-    1. 拟一个简洁的标题，能概括主要内容，不超过 20 个字，不要书名号或引号
-    2. 写一段摘要：先用一两句话概述，再用要点列出讨论的主要内容、达成的决议、待办事项（没有的部分可省略）
+    private static let titleSystemPrompt = """
+    下面是一段录音的整理后文本。请用一句话给它拟一个简洁的标题，能概括主要内容，不超过 20 个字。
+    只输出标题本身，不要书名号、引号、「标题：」之类的前缀，也不要任何解释。
+    """
 
-    严格按以下格式输出，不要其他任何内容：
-    标题：<标题>
-
-    <摘要正文>
+    private static let summarySystemPrompt = """
+    下面是一段录音的整理后文本。请写一段会议摘要：先用一两句话概述，再用要点列出讨论的主要内容、达成的决议、待办事项（没有的部分可省略）。
+    只输出摘要内容，不要标题，不要解释。
     """
 
     // MARK: - LLM Client

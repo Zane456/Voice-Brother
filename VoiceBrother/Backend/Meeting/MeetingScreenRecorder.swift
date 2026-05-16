@@ -19,7 +19,7 @@ final class MeetingScreenRecorder: NSObject, @unchecked Sendable {
     /// Serial queue: SCStream `.screen` callbacks land here directly, and
     /// `start` / `appendAudio` / `finish` / `cancel` all hop onto it. Passed
     /// to `SCStream.addStreamOutput(_:type:sampleHandlerQueue:)` by the caller.
-    let outputQueue = DispatchQueue(label: "com.voicebubble.screenrecorder")
+    let outputQueue = DispatchQueue(label: "com.voicebrother.screenrecorder")
 
     /// 16 kHz — the rate of the mixed audio `MeetingService` hands us.
     private static let audioSampleRate: Int32 = 16000

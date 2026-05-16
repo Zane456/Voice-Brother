@@ -2,8 +2,8 @@ import Foundation
 import SQLite3
 
 extension Notification.Name {
-    static let historyStoreDidChange = Notification.Name("VoiceBubble.historyStoreDidChange")
-    static let meetingFilesDidChange = Notification.Name("VoiceBubble.meetingFilesDidChange")
+    static let historyStoreDidChange = Notification.Name("VoiceBrother.historyStoreDidChange")
+    static let meetingFilesDidChange = Notification.Name("VoiceBrother.meetingFilesDidChange")
 }
 
 /// SQLite-backed store for voice transcription history. Thread-safe via actor isolation.
@@ -15,7 +15,7 @@ actor HistoryStore {
     init() {
         let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
-        ).first!.appendingPathComponent("VoiceBubble", isDirectory: true)
+        ).first!.appendingPathComponent("VoiceBrother", isDirectory: true)
         try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
         let dbPath = appSupport.appendingPathComponent("history.db").path
 

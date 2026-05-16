@@ -175,7 +175,7 @@ icon-accent                     #339CFF (blue-300)
 **规则**：
 - UI chrome 100% 用 sans
 - Mono 只出现在：代码块、终端输出、diff 视图、shell command 内嵌
-- 数字（计时器、版本号、percent）**不强制 mono**——这是当前 Voice Bubble 误判
+- 数字（计时器、版本号、percent）**不强制 mono**——这是当前 Voice Brother 误判
 - 数字需要等宽对齐时用 `font-variant-numeric: tabular-nums` 即可，不必换字体
 
 ---
@@ -218,7 +218,7 @@ icon-accent                     #339CFF (blue-300)
 
 `@media (prefers-reduced-motion: reduce)` 必须实现：所有 transform/opacity 都降到 0.22s ease-out，长动画（>0.4s）改为 instant。
 
-### Voice Bubble 当前问题
+### Voice Brother 当前问题
 
 - `fdb7f46` toggle 已经用 ease-out 是对的 ✓
 - 但通用 transition 时长用了 0.25s（应该是 0.15 或 0.3，不是中间值）
@@ -403,7 +403,7 @@ padding-panel/2   spacing × 2.5   10px    紧凑 panel
 观察 Codex 内部页面：使用 native 风格 toggle，**轨道色 = foreground @ 12%（off）/ #1A1C1F（on，foreground 满色）**。
 不是绿色 ✗，不是蓝色 ✗。
 
-当前 Voice Bubble 的 toggle (`fdb7f46`) 用了绿色轨道，需要改成 foreground 色。
+当前 Voice Brother 的 toggle (`fdb7f46`) 用了绿色轨道，需要改成 foreground 色。
 
 ### 8.8 徽章 / Badge
 
@@ -426,7 +426,7 @@ Codex 用的不是 spinner，是**文字 shimmer**：
 - 周期 1s，`animation-timing-function: steps(48, end)`（**锯齿步进**，不是平滑）
 - reduced-motion 时关闭
 
-这是 OpenAI 标志性的"打字思考"动画，Voice Bubble 的 "转写中..." 可以借鉴。
+这是 OpenAI 标志性的"打字思考"动画，Voice Brother 的 "转写中..." 可以借鉴。
 
 ---
 
@@ -465,7 +465,7 @@ SwiftUI 等价：
 
 ---
 
-## 11. Voice Bubble 撤回清单（mono 误用）
+## 11. Voice Brother 撤回清单（mono 误用）
 
 把以下 commit 的 mono 改动**撤销**或**改为 tabular-nums**：
 
@@ -510,7 +510,7 @@ Text("\(seconds)")
 ## 13. 字体/数字处理细节（macOS 特化）
 
 ```swift
-// 在 Voice Bubble 里需要"等宽数字"但不要 mono 字体的地方：
+// 在 Voice Brother 里需要"等宽数字"但不要 mono 字体的地方：
 Text(String(format: "%02d:%02d", min, sec))
     .font(.system(size: 14))
     .monospacedDigit()             // ← 这是关键 API
@@ -617,10 +617,10 @@ final class ThemeManager: ObservableObject {
 
 每步验证：
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
-xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
-pkill -x "VoiceBubble" 2>/dev/null || true
-open "/Users/zhangzheng/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
+cd "/Users/zhangzheng/IDE project/Voice Brother"
+xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet
+pkill -x "VoiceBrother" 2>/dev/null || true
+open "/Users/zhangzheng/Library/Developer/Xcode/DerivedData/VoiceBrother-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBrother.app"
 ```
 
 ---

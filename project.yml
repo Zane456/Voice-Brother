@@ -1,6 +1,6 @@
-name: VoiceBubble
+name: VoiceBrother
 options:
-  bundleIdPrefix: com.voicebubble
+  bundleIdPrefix: com.voicebrother
   deploymentTarget:
     macOS: "14.0"
   xcodeVersion: "16.0"
@@ -22,28 +22,31 @@ settings:
     DEAD_CODE_STRIPPING: YES
 
 packages:
+  # Pinned to exact versions: Package.resolved is gitignored, so `from:`
+  # lets SPM drift on every re-resolve. speech-swift past 0.0.7 raises its
+  # minimum deployment target to macOS 15, which breaks this macOS 14 app.
   speech-swift:
     url: https://github.com/soniqo/speech-swift
-    from: "0.0.7"
-  # Direct MLX dependency so VoiceBubble can call MLX.Memory APIs to bound
+    exactVersion: "0.0.7"
+  # Direct MLX dependency so VoiceBrother can call MLX.Memory APIs to bound
   # MLX's GPU buffer cache. Without this the cache grows unbounded across
   # transcriptions (variable audio lengths produce variable buffer sizes
   # that MLX's pool cannot reuse) and process RSS climbs into the tens of GB.
   mlx-swift:
     url: https://github.com/ml-explore/mlx-swift
-    from: "0.30.0"
+    exactVersion: "0.31.2"
 
 targets:
-  VoiceBubble:
+  VoiceBrother:
     type: application
     platform: macOS
     sources:
-      - path: VoiceBubble
+      - path: VoiceBrother
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.voicebubble.app
-        INFOPLIST_FILE: VoiceBubble/Info.plist
-        CODE_SIGN_ENTITLEMENTS: VoiceBubble/VoiceBubble.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.voicebrother.app
+        INFOPLIST_FILE: VoiceBrother/Info.plist
+        CODE_SIGN_ENTITLEMENTS: VoiceBrother/VoiceBrother.entitlements
         SWIFT_STRICT_CONCURRENCY: minimal
         OTHER_LDFLAGS: ["-framework", "ScreenCaptureKit", "-framework", "Speech"]
     dependencies:
@@ -60,22 +63,22 @@ targets:
       - sdk: ScreenCaptureKit.framework
       - sdk: Speech.framework
     entitlements:
-      path: VoiceBubble/VoiceBubble.entitlements
+      path: VoiceBrother/VoiceBrother.entitlements
       properties:
         com.apple.security.device.audio-input: true
         com.apple.security.device.camera: false
     info:
-      path: VoiceBubble/Info.plist
+      path: VoiceBrother/Info.plist
       properties:
-        CFBundleName: Voice Bubble
-        CFBundleDisplayName: Voice Bubble
-        CFBundleIdentifier: com.voicebubble.app
+        CFBundleName: Voice Brother
+        CFBundleDisplayName: Voice Brother
+        CFBundleIdentifier: com.voicebrother.app
         CFBundleVersion: "1.0.0"
         CFBundleShortVersionString: "1.0.0"
         LSMinimumSystemVersion: "14.0"
-        NSMicrophoneUsageDescription: "Voice Bubble 需要麦克风权限来录制你的语音并离线识别为文字。"
-        NSScreenCaptureUsageDescription: "Voice Bubble 在开启会议纪要时需要屏幕录制权限，用于捕获系统音频（比如视频会议里对方的声音）。"
-        NSSpeechRecognitionUsageDescription: "Voice Bubble 在启用 Apple 语音识别时需要此权限，离线处理你的语音。"
-        NSAccessibilityUsageDescription: "Voice Bubble 需要辅助功能权限来监听全局键盘快捷键（例如按住右 Option 说话），以及在输入栏光标处直接粘贴识别结果。"
-        NSAppleEventsUsageDescription: "Voice Bubble 通过系统事件把识别结果粘贴到当前聚焦的输入栏。"
-        NSHumanReadableCopyright: "Copyright © 2026 Voice Bubble. All rights reserved."
+        NSMicrophoneUsageDescription: "Voice Brother 需要麦克风权限来录制你的语音并离线识别为文字。"
+        NSScreenCaptureUsageDescription: "Voice Brother 在开启会议纪要时需要屏幕录制权限，用于捕获系统音频（比如视频会议里对方的声音）。"
+        NSSpeechRecognitionUsageDescription: "Voice Brother 在启用 Apple 语音识别时需要此权限，离线处理你的语音。"
+        NSAccessibilityUsageDescription: "Voice Brother 需要辅助功能权限来监听全局键盘快捷键（例如按住右 Option 说话），以及在输入栏光标处直接粘贴识别结果。"
+        NSAppleEventsUsageDescription: "Voice Brother 通过系统事件把识别结果粘贴到当前聚焦的输入栏。"
+        NSHumanReadableCopyright: "Copyright © 2026 Voice Brother. All rights reserved."

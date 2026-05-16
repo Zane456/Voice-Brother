@@ -156,7 +156,7 @@ enum TextInjector {
     /// Send a macOS notification when CGEvent paste fails.
     private static func sendFallbackNotification() {
         let content = UNMutableNotificationContent()
-        content.title = "Voice Bubble"
+        content.title = "Voice Brother"
         content.body = "文字已复制到剪贴板，请手动 Cmd+V 粘贴"
         content.sound = .default
 

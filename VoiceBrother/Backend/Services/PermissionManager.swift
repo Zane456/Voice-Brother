@@ -11,7 +11,7 @@ final class PermissionManager: ObservableObject, PermissionManagerProtocol {
 
     /// True once a permission that requires process restart to fully take effect
     /// (Screen Recording) has flipped from denied → granted during this run.
-    /// UI layer watches this to show a "重启 Voice Bubble" prompt.
+    /// UI layer watches this to show a "重启 Voice Brother" prompt.
     @Published var needsRelaunch: Bool = false
 
     /// Snapshot of Screen Recording permission at launch, so we can detect
