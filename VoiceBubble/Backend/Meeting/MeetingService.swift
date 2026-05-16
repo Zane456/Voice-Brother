@@ -3,6 +3,7 @@ import AVFoundation
 import Combine
 import CoreMedia
 import Foundation
+import Qwen3ASR
 import ScreenCaptureKit
 import SpeechVAD
 
@@ -29,6 +30,13 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
     @Published var elapsedSeconds: Int = 0
     @Published var savePath: String
     @Published var summaryError: String?
+    /// Absolute path of the markdown file for the meeting currently being
+    /// finalized. Non-nil only while `state` is `.finishing` / `.summarizing`;
+    /// the History tab uses it to badge that file card as "生成中".
+    @Published private(set) var processingMarkdownPath: String?
+    /// Model load/download progress (0...1) while `state == .preparing`.
+    /// nil once recording starts. Driven by `Qwen3ASRModel.fromPretrained`.
+    @Published var prepareProgress: Double?
 
     // MARK: - Dependencies
 
@@ -42,6 +50,9 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
     private var vadModel: SileroVADModel?
     private var audioEngine: AVAudioEngine?
     private var scStream: SCStream?
+    /// Screen recorder for the current meeting — non-nil only while a meeting
+    /// with screen recording enabled is in progress.
+    private var screenRecorder: MeetingScreenRecorder?
     private nonisolated(unsafe) let audioBuffer = AudioChunkBuffer()
     private var startTime: Date?
     private var markdownFilePath: String?
@@ -51,6 +62,11 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
     /// empty (no speech captured).
     private var audioFile: AVAudioFile?
     private var audioFilePath: String?
+    /// Absolute path of the screen-recording `.mov` for the current meeting.
+    /// Set in `initMarkdown` alongside the markdown/WAV paths so all three
+    /// share one timestamp; the recorder is only created if screen recording
+    /// is enabled.
+    private var videoFilePath: String?
     /// Pre-allocated format used to hand Float32 samples to AVAudioFile, which
     /// internally transcodes to Int16 LPCM for the WAV file.
     private lazy var audioWriteFormat: AVAudioFormat? =
@@ -119,12 +135,10 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
     func start() {
         guard state == .idle else { return }
 
-        // Ensure the voice service has loaded a model (model must be cached)
-        let modelString = configManager.model
-        guard ASRModel(rawValue: modelString) != nil else {
-            state = .error("无效的模型配置")
-            return
-        }
+        // Meetings always transcribe with their own local Qwen model, chosen
+        // independently of voice input. The accessor already constrains this
+        // to a valid Qwen model, so there's no invalid-config case to guard.
+        let meetingModel = configManager.meetingASRModel
 
         savePath = configManager.meetingSavePath
 
@@ -144,40 +158,62 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         }
 
         summaryError = nil
-        state = .recording
-        startTime = Date()
+        prepareProgress = nil
         elapsedSeconds = 0
+        // Model load (and, on first use, download) happens before recording —
+        // show the preparing state so the UI isn't unresponsive meanwhile.
+        state = .preparing
 
-        startElapsedTimer()
-
-        // Suppress single-key voice input during meeting
+        // Suppress single-key voice input for the whole meeting lifecycle —
+        // avoids microphone contention and prevents a second ASR model from
+        // being loaded while the meeting's own model is resident.
         voiceService?.keyboardListenerRef?.isMeetingActive = true
-
-        // Show recording indicator (meeting mode = red REC + timer)
-        RecordingOverlayPanel.shared.show(mode: .meeting)
 
         recordingTask = Task { @MainActor in
             do {
-                // Share the already-loaded engine from voice service (no reload needed).
-                // Safe because voice recording is suppressed during meetings (meetingActive = true).
-                guard let engine = self.voiceService?.asrEngineRef else {
-                    self.state = .error("语音服务未加载模型")
+                // Load the meeting's own Qwen engine. Unlike before — when the
+                // meeting borrowed VoiceService's engine — this instance is
+                // owned by the meeting and unloaded at finalize, so it costs
+                // no memory between meetings.
+                let qwenModel = try await Qwen3ASRModel.fromPretrained(
+                    modelId: meetingModel.huggingFaceId,
+                    progressHandler: { [weak self] progress, _ in
+                        Task { @MainActor in self?.prepareProgress = progress }
+                    }
+                )
+
+                guard !Task.isCancelled else {
+                    qwenModel.unload()
                     self.voiceService?.keyboardListenerRef?.isMeetingActive = false
-                    RecordingOverlayPanel.shared.hide()
+                    self.prepareProgress = nil
+                    self.state = .idle
                     return
                 }
-                self.asrEngine = engine
+                self.asrEngine = QwenASREngine(model: qwenModel)
 
                 // Load VAD model (small, loads quickly)
                 let vad = try await SileroVADModel.fromPretrained(engine: .coreml)
                 self.vadModel = vad
 
                 guard !Task.isCancelled else {
-                    self.asrEngine = nil  // Don't unload — shared with voice service
+                    self.asrEngine?.unload()
+                    self.asrEngine = nil
                     self.vadModel = nil
                     self.voiceService?.keyboardListenerRef?.isMeetingActive = false
+                    self.prepareProgress = nil
+                    self.state = .idle
                     return
                 }
+
+                // Model ready — transition to recording. The elapsed timer and
+                // the red-REC overlay only start now, so the model-load delay
+                // isn't counted as meeting time.
+                self.prepareProgress = nil
+                self.startTime = Date()
+                self.elapsedSeconds = 0
+                self.state = .recording
+                self.startElapsedTimer()
+                RecordingOverlayPanel.shared.show(mode: .meeting)
 
                 // Initialize markdown file
                 self.initMarkdown()
@@ -186,31 +222,43 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 try await self.runRecording()
 
             } catch {
-                self.state = .error("会议录制失败: \(error.localizedDescription)")
+                self.state = .error("录制失败: \(error.localizedDescription)")
                 await self.cleanup()
             }
         }
     }
 
     func stop() {
-        guard state == .recording else { return }
-        state = .finishing
-        isRecording = false
-        stopElapsedTimer()
+        switch state {
+        case .preparing:
+            // Model is still loading — cancel the startup task. Its own
+            // `Task.isCancelled` checks unload the partially-loaded model,
+            // re-enable voice input, and reset state back to .idle.
+            recordingTask?.cancel()
+        case .recording:
+            state = .finishing
+            // Expose the in-progress markdown file so the History tab can
+            // badge it as "生成中" until finalization + summarization finish.
+            processingMarkdownPath = markdownFilePath
+            isRecording = false
+            stopElapsedTimer()
 
-        // Hide recording indicator
-        RecordingOverlayPanel.shared.hide()
+            // Hide recording indicator
+            RecordingOverlayPanel.shared.hide()
 
-        // Keep meetingActive = true during finalization to prevent voice service
-        // from accessing the shared model. It will be set to false in runRecording()
-        // after finalization completes.
+            // Keep meetingActive = true during finalization to prevent voice
+            // input from grabbing the microphone. runRecording() sets it back
+            // to false once finalization completes.
+        default:
+            break
+        }
     }
 
     func toggle() {
         switch state {
         case .idle:
             start()
-        case .recording:
+        case .preparing, .recording:
             stop()
         case .finishing, .summarizing:
             // Already finishing or summarizing, do nothing
@@ -253,7 +301,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let ts = formatter.string(from: start)
-        let filename = "会议纪要_\(ts).md"
+        let filename = "声音录制_\(ts).md"
         markdownFilePath = (savePath as NSString).appendingPathComponent(filename)
         transcribedSegmentCount = 0  // reset for the new meeting
         lastSegmentEndTime = nil
@@ -264,9 +312,14 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         // 16 kHz mono — the same rate ASR works at, so we skip re-resampling.
         // ~115 MB per hour, which is acceptable for a meeting archive and far
         // smaller than keeping the Float32 mix in memory until finalize.
-        let audioFilename = "会议录音_\(ts).wav"
+        let audioFilename = "录音_\(ts).wav"
         let audioPath = (savePath as NSString).appendingPathComponent(audioFilename)
         audioFilePath = audioPath
+
+        // Screen recording (if enabled) writes a .mov alongside, sharing the
+        // same timestamp so the meeting's files group together.
+        let videoFilename = "录屏_\(ts).mov"
+        videoFilePath = (savePath as NSString).appendingPathComponent(videoFilename)
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: Self.sampleRate,
@@ -297,7 +350,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         let timeStr = timeFormatter.string(from: start)
 
         let header = """
-        # 会议纪要
+        # 声音录制
 
         - 日期：\(dateStr)
         - 时间：\(timeStr) -
@@ -525,9 +578,15 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         self.audioEngine = micEngine
         try micEngine.start()
 
+        // Snapshot the screen-recording preference once for this meeting — the
+        // UI toggle is disabled while a meeting runs, so this can't change.
+        let screenRecordingEnabled = configManager.meetingScreenRecording
+
         // Start system audio capture via ScreenCaptureKit. If this fails (e.g. user
         // didn't grant screen recording permission) we record mic-only and surface
         // that fact in the markdown header so the user isn't surprised later.
+        // When screen recording is on, the same SCStream also emits video frames
+        // into a MeetingScreenRecorder.
         var systemAudioCaptured = false
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
@@ -544,17 +603,44 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
             config.sampleRate = Int(Self.sckSampleRate)
             config.channelCount = 1
 
+            // Screen recording: configure the same stream to also emit video,
+            // downscaled to ≤1080p at 10fps to keep the .mov archive small.
+            if screenRecordingEnabled, let videoPath = videoFilePath {
+                let videoSize = Self.screenRecordingSize(
+                    displayWidth: display.width,
+                    displayHeight: display.height
+                )
+                config.width = Int(videoSize.width)
+                config.height = Int(videoSize.height)
+                config.minimumFrameInterval = CMTime(value: 1, timescale: 10)
+                config.pixelFormat = kCVPixelFormatType_32BGRA
+                let recorder = MeetingScreenRecorder(outputURL: URL(fileURLWithPath: videoPath))
+                recorder.start(displaySize: videoSize)
+                self.screenRecorder = recorder
+            }
+
             let stream = SCStream(filter: filter, configuration: config, delegate: nil)
             try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: DispatchQueue(label: "sysaudio"))
+            if let recorder = self.screenRecorder {
+                try stream.addStreamOutput(recorder, type: .screen, sampleHandlerQueue: recorder.outputQueue)
+            }
             try await stream.startCapture()
             self.scStream = stream
             systemAudioCaptured = true
         } catch {
             print("[MeetingService] System audio capture failed: \(error). Continuing with microphone only.")
+            // The stream never started — discard the recorder so its empty
+            // .mov file doesn't linger.
+            self.screenRecorder?.cancel()
+            self.screenRecorder = nil
         }
 
         if !systemAudioCaptured {
-            writeToFile("> ⚠️ 系统音频未能采集（可能未授予屏幕录制权限），本次会议仅录制麦克风。\n\n")
+            if screenRecordingEnabled {
+                writeToFile("> ⚠️ 系统音频与屏幕录制未能启用（可能未授予屏幕录制权限），本次录制仅采集麦克风。\n\n")
+            } else {
+                writeToFile("> ⚠️ 系统音频未能采集（可能未授予屏幕录制权限），本次录制仅采集麦克风。\n\n")
+            }
         }
 
         // Main recording loop
@@ -578,6 +664,8 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 // if the user later replays the recording and something was
                 // misrecognised they can hear exactly what the mic picked up.
                 appendAudioSamples(mixed)
+                // The screen recording reuses this exact mix as its audio track.
+                screenRecorder?.appendAudio(mixed)
             }
 
             let duration = Double(accumulated.count) / Self.sampleRate
@@ -627,6 +715,18 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         // saving an empty header-only markdown or running the summary LLM.
         let isEmptyMeeting = transcribedSegmentCount == 0
 
+        // Finalize the screen recording before touching files. An empty meeting
+        // discards the .mov along with the markdown/WAV; otherwise await the
+        // writer so the .mov is fully flushed.
+        if let recorder = screenRecorder {
+            if isEmptyMeeting {
+                recorder.cancel()
+            } else {
+                _ = await recorder.finish()
+            }
+            screenRecorder = nil
+        }
+
         // Close the audio file before touching the filesystem — releases the
         // handle so we can delete it cleanly if the meeting was empty.
         audioFile = nil
@@ -641,10 +741,16 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
             markdownFilePath = nil
         } else {
             finalizeMarkdown()
+            // A meeting with content just completed — History tab opens on
+            // the meeting segment next.
+            configManager.lastHistoryKind = "meeting"
             NotificationCenter.default.post(name: .meetingFilesDidChange, object: nil)
         }
 
-        // Release model references (don't unload — ASR engine is shared with voice service)
+        // Unload the meeting's own ASR model — meetings own this instance
+        // (it is not shared with voice input) and free it between meetings so
+        // it occupies no memory while idle.
+        asrEngine?.unload()
         asrEngine = nil
         vadModel = nil
 
@@ -670,6 +776,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         voiceService?.keyboardListenerRef?.isMeetingActive = false
 
         // Update state
+        processingMarkdownPath = nil
         state = .idle
     }
 
@@ -752,6 +859,24 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         return output
     }
 
+    // MARK: - Screen Recording
+
+    /// Pixel size for the screen-recording video: the display's aspect ratio
+    /// with height capped at 1080, both dimensions rounded to even numbers
+    /// (H.264 requires even width/height).
+    private static func screenRecordingSize(displayWidth: Int, displayHeight: Int) -> CGSize {
+        guard displayWidth > 0, displayHeight > 0 else {
+            return CGSize(width: 1920, height: 1080)
+        }
+        let cappedHeight = min(displayHeight, 1080)
+        let aspect = Double(displayWidth) / Double(displayHeight)
+        var h = cappedHeight
+        var w = Int((Double(h) * aspect).rounded())
+        if w % 2 != 0 { w += 1 }
+        if h % 2 != 0 { h += 1 }
+        return CGSize(width: w, height: h)
+    }
+
     // MARK: - VAD Segmentation
 
     private func findCutPoint(in audio: [Float]) -> Int? {
@@ -808,10 +933,12 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
             // Serialize: wait for previous segment to finish
             await previousTask?.value
 
-            // Snapshot the user-selected language on the main actor before
-            // hopping to the detached transcription task. nil = auto-detect.
-            let languageHint: String? = await MainActor.run { [weak self] in
-                self?.configManager.meetingLanguage.asrLanguageHint
+            // Snapshot main-actor config before hopping to the detached
+            // transcription task. languageHint nil = auto-detect.
+            // 语气词过滤 is a shared toggle (通用 tab) — meeting honors it too.
+            let (languageHint, removeFillers): (String?, Bool) = await MainActor.run { [weak self] in
+                (self?.configManager.meetingLanguage.asrLanguageHint,
+                 self?.configManager.removeFillers ?? true)
             }
             let text = engine.transcribe(
                 audio: capturedAudio,
@@ -823,9 +950,8 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
             // vary up to vadForceCut (40s), so without this the cache grows
             // monotonically across a long meeting.
             MLXMemoryGovernor.reclaim()
-            let processed = TextProcessor.collapseRepeats(
-                in: TextProcessor.removeFillers(from: text)
-            )
+            let cleaned = removeFillers ? TextProcessor.removeFillers(from: text) : text
+            let processed = TextProcessor.collapseRepeats(in: cleaned)
             if !processed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 await self?.appendSegment(timestamp: timestamp, text: processed)
             }
@@ -879,6 +1005,10 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
             scStream = nil
         }
 
+        // Error path — discard any in-progress screen recording.
+        screenRecorder?.cancel()
+        screenRecorder = nil
+
         // Wait for any in-flight detached transcription to finish before
         // releasing the shared ASR engine reference and re-enabling voice
         // input. Otherwise the voice service could grab the same non-thread-safe
@@ -886,7 +1016,8 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         await pendingTranscriptionTask?.value
         pendingTranscriptionTask = nil
 
-        asrEngine = nil  // Don't unload — shared with voice service
+        asrEngine?.unload()  // Meeting owns this engine — free it now
+        asrEngine = nil
         vadModel = nil
 
         // Close the WAV handle so the empty-meeting delete can proceed.
@@ -906,6 +1037,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
             NotificationCenter.default.post(name: .meetingFilesDidChange, object: nil)
         }
         voiceService?.keyboardListenerRef?.isMeetingActive = false
+        processingMarkdownPath = nil
         state = .idle
     }
 }
