@@ -11,6 +11,7 @@
 		048C810DEE6BB274953441FE /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66F087836C32C7C27E4AD98B /* AppConfig.swift */; };
 		0A6789CA2A774395E0FE1BA4 /* VoiceBubbleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 410268E9906BC1DB3E7A1BAB /* VoiceBubbleApp.swift */; };
 		0CC6DE6C1FB6BE084ABA5ECA /* MeetingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78C2DF426A804646C9F98185 /* MeetingService.swift */; };
+		FA11C0DE5C8EE001A0000001 /* MeetingScreenRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA11C0DE5C8EE001A0000002 /* MeetingScreenRecorder.swift */; };
 		0EAE790AC6928A6F1CFBEB07 /* AppleASREngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00BE49DD9F3CDA21D76AE890 /* AppleASREngine.swift */; };
 		169B394ED774F8DD819FC6FC /* HistoryManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA9D2A17C810FBCF1961FF9A /* HistoryManager.swift */; };
 		1808533ACD8443768AADC074 /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F74AB8CBA551DDF844620474 /* ScreenCaptureKit.framework */; };
@@ -63,6 +64,13 @@
 		C0DE5002000000000000ABC1 /* MonoTextExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5002000000000000ABC2 /* MonoTextExtension.swift */; };
 		C0DE5003000000000000ABC1 /* CodexButtonStyles.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5003000000000000ABC2 /* CodexButtonStyles.swift */; };
 		C0DE5004000000000000ABC1 /* CodexBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5004000000000000ABC2 /* CodexBadge.swift */; };
+		C0DE500A000000000000ABC1 /* LLMConfigCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE500A000000000000ABC2 /* LLMConfigCard.swift */; };
+		A1B2C3D4E5F600000000B001 /* StatusBarIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F600000000B002 /* StatusBarIcon.swift */; };
+		A1B2C3D4E5F600000000C001 /* VisualEffectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F600000000C002 /* VisualEffectView.swift */; };
+		A1B2C3D4E5F600000000D001 /* AppLogoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F600000000D002 /* AppLogoView.swift */; };
+		A1B2C3D4E5F600000000E001 /* WindowCornerRadius.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F600000000E002 /* WindowCornerRadius.swift */; };
+		C0DE5005000000000000ABC1 /* KeywordAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5005000000000000ABC2 /* KeywordAnalyzer.swift */; };
+		C0DE5006000000000000ABC1 /* WordCloudView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5006000000000000ABC2 /* WordCloudView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -100,6 +108,7 @@
 		7442E9E6C97095E0F7C5A948 /* MainWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindow.swift; sourceTree = "<group>"; };
 		756328E9482AE18635C72B48 /* Types.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Types.swift; sourceTree = "<group>"; };
 		78C2DF426A804646C9F98185 /* MeetingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingService.swift; sourceTree = "<group>"; };
+		FA11C0DE5C8EE001A0000002 /* MeetingScreenRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingScreenRecorder.swift; sourceTree = "<group>"; };
 		7C1334297348B9BD28EC251D /* RecordingOverlayPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingOverlayPanel.swift; sourceTree = "<group>"; };
 		7D75F84D4D9FE24AF126E7F6 /* CustomToggleStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomToggleStyle.swift; sourceTree = "<group>"; };
 		9E9BE3AEC870F10CF6B6E202 /* PermissionWarningSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionWarningSection.swift; sourceTree = "<group>"; };
@@ -121,6 +130,13 @@
 		C0DE5002000000000000ABC2 /* MonoTextExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonoTextExtension.swift; sourceTree = "<group>"; };
 		C0DE5003000000000000ABC2 /* CodexButtonStyles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexButtonStyles.swift; sourceTree = "<group>"; };
 		C0DE5004000000000000ABC2 /* CodexBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexBadge.swift; sourceTree = "<group>"; };
+		C0DE500A000000000000ABC2 /* LLMConfigCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMConfigCard.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F600000000B002 /* StatusBarIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarIcon.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F600000000C002 /* VisualEffectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualEffectView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F600000000D002 /* AppLogoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogoView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F600000000E002 /* WindowCornerRadius.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowCornerRadius.swift; sourceTree = "<group>"; };
+		C0DE5005000000000000ABC2 /* KeywordAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeywordAnalyzer.swift; sourceTree = "<group>"; };
+		C0DE5006000000000000ABC2 /* WordCloudView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WordCloudView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -156,6 +172,7 @@
 			children = (
 				E9C0EC612CA593D492A90CED /* ConfigManager.swift */,
 				FA9D2A17C810FBCF1961FF9A /* HistoryManager.swift */,
+				C0DE5005000000000000ABC2 /* KeywordAnalyzer.swift */,
 				3B2AAFBFF0AAEE8432F2E0D5 /* KeychainStore.swift */,
 				620E1E1E4C5B081D83135582 /* PermissionManager.swift */,
 			);
@@ -168,6 +185,7 @@
 				6BD53630FE0DA55E9C30C6BB /* MeetingRetranscribeLauncher.swift */,
 				1126D1FEA0547E4CAC45EF02 /* MeetingRetranscriber.swift */,
 				78C2DF426A804646C9F98185 /* MeetingService.swift */,
+				FA11C0DE5C8EE001A0000002 /* MeetingScreenRecorder.swift */,
 				C96966F0D25C10C240713BF9 /* MeetingSummarizer.swift */,
 			);
 			path = Meeting;
@@ -270,7 +288,13 @@
 				C0DE5002000000000000ABC2 /* MonoTextExtension.swift */,
 				C0DE5003000000000000ABC2 /* CodexButtonStyles.swift */,
 				C0DE5004000000000000ABC2 /* CodexBadge.swift */,
+				C0DE500A000000000000ABC2 /* LLMConfigCard.swift */,
 				60686020E65A63811B497B59 /* SectionHeader.swift */,
+				A1B2C3D4E5F600000000B002 /* StatusBarIcon.swift */,
+				A1B2C3D4E5F600000000C002 /* VisualEffectView.swift */,
+				A1B2C3D4E5F600000000D002 /* AppLogoView.swift */,
+				A1B2C3D4E5F600000000E002 /* WindowCornerRadius.swift */,
+				C0DE5006000000000000ABC2 /* WordCloudView.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -389,6 +413,8 @@
 				378D96FFC35CA5475693F68A /* GeneralSettingsSection.swift in Sources */,
 				169B394ED774F8DD819FC6FC /* HistoryManager.swift in Sources */,
 				96490F88FCBBFDA70C10A4EE /* HistoryTab.swift in Sources */,
+				C0DE5005000000000000ABC1 /* KeywordAnalyzer.swift in Sources */,
+				C0DE5006000000000000ABC1 /* WordCloudView.swift in Sources */,
 				61DADCB3119CF4869D33DB42 /* ITNProcessor.swift in Sources */,
 				3F9D8914CFCD9A53E8C8AB50 /* KeyboardListener.swift in Sources */,
 				F0C7B1A9000000000000ABCE /* FocusObserver.swift in Sources */,
@@ -396,6 +422,7 @@
 				C0DE5002000000000000ABC1 /* MonoTextExtension.swift in Sources */,
 				C0DE5003000000000000ABC1 /* CodexButtonStyles.swift in Sources */,
 				C0DE5004000000000000ABC1 /* CodexBadge.swift in Sources */,
+				C0DE500A000000000000ABC1 /* LLMConfigCard.swift in Sources */,
 				8991F91256FDF59163C28D83 /* KeychainStore.swift in Sources */,
 				1BB43B0D4017C3C910E75931 /* LLMClient.swift in Sources */,
 				EC44067CB862C952CB1C592E /* MLXMemoryGovernor.swift in Sources */,
@@ -403,6 +430,7 @@
 				58450EAB08009D3C91BF4F82 /* MeetingRetranscribeLauncher.swift in Sources */,
 				986147337045855AEF9ECB66 /* MeetingRetranscriber.swift in Sources */,
 				0CC6DE6C1FB6BE084ABA5ECA /* MeetingService.swift in Sources */,
+				FA11C0DE5C8EE001A0000001 /* MeetingScreenRecorder.swift in Sources */,
 				E64E7471354613EC9529E28D /* MeetingSettingsSection.swift in Sources */,
 				E51EDA26424DFDABD082B3EE /* MeetingSummarizer.swift in Sources */,
 				8F631923BE8E8856B08B5512 /* MeetingTab.swift in Sources */,
@@ -415,6 +443,10 @@
 				3AFFD5528CC4598FC21A392F /* RecordingOverlayPanel.swift in Sources */,
 				4B72C8D0FB20E1697FB0AFEA /* RecordingWaveformView.swift in Sources */,
 				CE6C3CC3DA5A340A6B58EF11 /* SectionHeader.swift in Sources */,
+				A1B2C3D4E5F600000000B001 /* StatusBarIcon.swift in Sources */,
+				A1B2C3D4E5F600000000C001 /* VisualEffectView.swift in Sources */,
+				A1B2C3D4E5F600000000D001 /* AppLogoView.swift in Sources */,
+				A1B2C3D4E5F600000000E001 /* WindowCornerRadius.swift in Sources */,
 				4CD1656261198212B6D66A12 /* SettingsTab.swift in Sources */,
 				3BC033C7C21A081F44AD9756 /* TextInjector.swift in Sources */,
 				40C1C0E7510399CA2239FF6D /* TextProcessor.swift in Sources */,
