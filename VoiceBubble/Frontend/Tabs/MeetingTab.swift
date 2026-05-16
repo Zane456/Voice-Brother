@@ -14,7 +14,7 @@ struct MeetingTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("会议")
+                Text("声音录制")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.textPrimary)
                 Spacer()
@@ -26,6 +26,8 @@ struct MeetingTab: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     recordingControlCard
+                    screenRecordingToggleCard
+                    openFolderButton
                     if let err = meetingService.summaryError {
                         summaryErrorCard(err)
                     }
@@ -54,7 +56,7 @@ struct MeetingTab: View {
         }()
         let isBusy: Bool = {
             switch meetingService.state {
-            case .finishing, .summarizing: return true
+            case .preparing, .finishing, .summarizing: return true
             default: return false
             }
         }()
@@ -82,10 +84,10 @@ struct MeetingTab: View {
 
                 if isRecording {
                     Text(elapsedTime)
-                        .font(.system(size: 22, weight: .semibold, design: .monospaced).monospacedDigit())
+                        .font(.system(size: 22, weight: .semibold).monospacedDigit())
                         .foregroundColor(theme.destructive)
                 } else {
-                    Text(subtitle())
+                    subtitleText
                         .font(.system(size: 12))
                         .foregroundColor(theme.textSecondary)
                 }
@@ -96,7 +98,7 @@ struct MeetingTab: View {
             Button {
                 meetingService.toggle()
             } label: {
-                Text(isRecording ? "停止会议" : "开始会议")
+                Text(isRecording ? "停止录制" : "开始录制")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white)
                     .padding(.horizontal, 22)
@@ -115,22 +117,82 @@ struct MeetingTab: View {
         .glassCard()
     }
 
+    /// Opens the meeting save folder in Finder. Sits right below the
+    /// recording control — the folder *picker* lives in 通用 设置.
+    private var openFolderButton: some View {
+        Button {
+            NSWorkspace.shared.open(URL(fileURLWithPath: configManager.meetingSavePath))
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .font(.system(size: 13))
+                Text("打开录音文件夹")
+                    .font(.system(size: 13, weight: .medium))
+                Spacer()
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 11))
+            }
+            .foregroundColor(theme.accentSecondary)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassCard()
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 屏幕录制 开关。录屏配置持久化在设置里，但开关直接放在录制控件下方，
+    /// 方便临场决定。会议进行中禁用——录屏开关在会议开始时读一次快照。
+    private var screenRecordingToggleCard: some View {
+        let meetingActive: Bool = {
+            switch meetingService.state {
+            case .idle, .error: return false
+            default: return true
+            }
+        }()
+
+        return HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("屏幕录制")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.textPrimary)
+                Text("开启后全程录制主显示器全屏，存为视频文件")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: $configManager.meetingScreenRecording)
+                .toggleStyle(CustomToggleStyle())
+                .labelsHidden()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+        .disabled(meetingActive)
+        .opacity(meetingActive ? 0.5 : 1)
+    }
+
     private func headlineText(isRecording: Bool, isBusy: Bool) -> String {
         if isRecording { return "正在录制" }
         switch meetingService.state {
+        case .preparing:
+            if let p = meetingService.prepareProgress, p < 1 {
+                return "正在加载识别模型… \(Int(p * 100))%"
+            }
+            return "正在加载识别模型…"
         case .finishing: return "正在保存音频…"
         case .summarizing: return "正在生成摘要…"
         case .error(let msg): return "出错：\(msg)"
-        default: return "准备录制会议"
+        default: return "准备开始录制"
         }
     }
 
-    private func subtitle() -> String {
-        // Meetings share the voice input engine, so the provenance comes from
-        // `asrProviderType` rather than a (now removed) meeting-specific field.
-        let isCloud = configManager.asrProviderType == "cloud"
-        let provenance = isCloud ? "云端转写" : "本地转写"
-        return "\(provenance) · 双击 ⌘ 也可启动"
+    /// Idle-state subtitle. The ⌘ shortcut key is bold + primary-colored so
+    /// it reads clearly as "the key", not as ordinary body text.
+    private var subtitleText: Text {
+        Text("本地转写 · 同时长按左右 ")
+            + Text("⌘").font(.system(size: 13, weight: .bold)).foregroundColor(theme.textPrimary)
+            + Text(" 启动 / 结束记录")
     }
 
     private func summaryErrorCard(_ message: String) -> some View {
@@ -176,7 +238,7 @@ struct MeetingTab: View {
             startTimer()
         case .finishing, .summarizing:
             break
-        case .idle, .error:
+        case .idle, .preparing, .error:
             elapsedTime = "00:00:00"
         }
     }
