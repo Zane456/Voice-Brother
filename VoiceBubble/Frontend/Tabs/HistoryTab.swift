@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Unified history center. Internal segmented switch toggles between
 /// voice transcription history (SQLite) and meeting markdown files.
@@ -8,10 +7,13 @@ struct HistoryTab: View {
     @EnvironmentObject private var theme: ThemeManager
 
     @State private var selectedKind: Kind = .voice
+    /// Guards the one-time `selectedKind` sync from `lastHistoryKind` so a
+    /// manual segment switch isn't overridden on every re-appear.
+    @State private var didInitKind = false
 
     private enum Kind: String, CaseIterable {
         case voice = "语音输入"
-        case meeting = "会议录音"
+        case meeting = "声音录制"
     }
 
     var body: some View {
@@ -47,6 +49,13 @@ struct HistoryTab: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            // One-time sync: open on whichever segment the most recently
+            // completed task belongs to. Manual switches afterwards stand.
+            guard !didInitKind else { return }
+            selectedKind = configManager.lastHistoryKind == "meeting" ? .meeting : .voice
+            didInitKind = true
+        }
     }
 }
 
@@ -59,19 +68,13 @@ struct VoiceHistoryView: View {
     @State private var records: [TranscriptionRecord] = []
     @State private var hasMore = true
     @State private var isLoadingMore = false
-    @State private var searchText = ""
     @State private var copiedId: UUID?
     @State private var statistics: HistoryStore.Statistics?
+    @State private var keywords: [KeywordAnalyzer.Keyword] = []
     @State private var showClearConfirm = false
     @State private var pendingClearGroup: DateGroup?
-    @State private var showExportPopover = false
 
     private static let pageSize = 20
-
-    private var filtered: [TranscriptionRecord] {
-        if searchText.isEmpty { return records }
-        return records.filter { $0.text.localizedCaseInsensitiveContains(searchText) }
-    }
 
     private enum DateGroup: CaseIterable {
         case today, yesterday, thisWeek, earlier
@@ -115,7 +118,7 @@ struct VoiceHistoryView: View {
     }
 
     private var groupedRecords: [(DateGroup, [TranscriptionRecord])] {
-        let grouped = Dictionary(grouping: filtered) { dateGroup(for: $0.timestamp) }
+        let grouped = Dictionary(grouping: records) { dateGroup(for: $0.timestamp) }
         return DateGroup.allCases.compactMap { group in
             guard let records = grouped[group], !records.isEmpty else { return nil }
             return (group, records)
@@ -127,46 +130,24 @@ struct VoiceHistoryView: View {
             if let stats = statistics, stats.recordCount > 0 {
                 statisticsSection(stats: stats)
                     .padding(.horizontal, 32)
-                    .padding(.bottom, 24)
+                    .padding(.bottom, 16)
             }
 
-            HStack(spacing: 8) {
-                searchBar
-
-                Button {
-                    showExportPopover = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "square.and.arrow.up").font(.system(size: 12))
-                        Text("导出").font(.system(size: 12))
-                    }
-                    .foregroundColor(theme.accentSecondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(theme.surfaceBackground)
-                    .cornerRadius(8)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.border, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .disabled(records.isEmpty)
-                .popover(isPresented: $showExportPopover, arrowEdge: .bottom) {
-                    exportPopover
-                }
-            }
-            .padding(.horizontal, 32)
-            .padding(.bottom, 20)
+            // Always render the word-cloud card so the box is present from the
+            // first frame — only the words inside fade in once keywords load.
+            WordCloudView(keywords: keywords)
+                .padding(.horizontal, 32)
+                .padding(.bottom, 20)
 
             if records.isEmpty {
                 emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if filtered.isEmpty {
-                noSearchResults.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         ForEach(groupedRecords, id: \.0) { group, groupRecords in
                             dateSectionView(group, records: groupRecords)
                         }
-                        if hasMore && searchText.isEmpty {
+                        if hasMore {
                             Color.clear.frame(height: 1).onAppear { Task { await loadMore() } }
                             if isLoadingMore {
                                 ProgressView().controlSize(.small)
@@ -183,11 +164,13 @@ struct VoiceHistoryView: View {
         .task {
             await loadRecords()
             await loadStatistics()
+            await loadKeywords()
         }
         .onReceive(NotificationCenter.default.publisher(for: .historyStoreDidChange)) { _ in
             Task {
                 await loadRecords()
                 await loadStatistics()
+                await loadKeywords()
             }
         }
         .alert("确认清空", isPresented: $showClearConfirm) {
@@ -224,6 +207,15 @@ struct VoiceHistoryView: View {
         statistics = await historyStore.getStatistics()
     }
 
+    /// Fetches the full corpus and computes high-frequency keywords off the
+    /// main thread — segmentation over all history can be sizable.
+    private func loadKeywords() async {
+        let texts = await historyStore.fetchAll().map(\.text)
+        keywords = await Task.detached(priority: .utility) {
+            KeywordAnalyzer.analyze(texts: texts)
+        }.value
+    }
+
     private func loadMore() async {
         guard !isLoadingMore else { return }
         isLoadingMore = true
@@ -233,23 +225,6 @@ struct VoiceHistoryView: View {
         records.append(contentsOf: newRecords)
         hasMore = page.count >= Self.pageSize
         isLoadingMore = false
-    }
-
-    private var searchBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass").font(.system(size: 13)).foregroundColor(theme.textTertiary)
-            TextField("搜索历史记录...", text: $searchText)
-                .textFieldStyle(.plain).font(.system(size: 13))
-                .foregroundColor(theme.textPrimary)
-            if !searchText.isEmpty {
-                Button { searchText = "" } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12)).foregroundColor(theme.textTertiary)
-                }.buttonStyle(.plain)
-            }
-        }
-        .padding(10)
-        .glassCard()
     }
 
     private func statisticsSection(stats: HistoryStore.Statistics) -> some View {
@@ -347,86 +322,6 @@ struct VoiceHistoryView: View {
         .glassCard()
     }
 
-    private var exportPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("导出语音记录")
-                .font(.system(size: 13, weight: .semibold)).foregroundColor(theme.textPrimary)
-
-            HStack(spacing: 8) {
-                Spacer()
-                Button("取消") { showExportPopover = false }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12)).foregroundColor(theme.textSecondary)
-
-                Button("Markdown") { exportMarkdown() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold)).foregroundColor(.white)
-                    .padding(.horizontal, 12).padding(.vertical, 5)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.accent))
-
-                Button("CSV") { exportCSV() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold)).foregroundColor(.white)
-                    .padding(.horizontal, 12).padding(.vertical, 5)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentSecondary))
-            }
-        }
-        .padding(16)
-        .frame(width: 320)
-    }
-
-    private func exportCSV() {
-        Task {
-            let allRecords = await historyStore.fetchAll()
-            await MainActor.run {
-                let header = "时间,时长(秒),文本,字数"
-                let iso = ISO8601DateFormatter()
-                let rows = allRecords.map { r -> String in
-                    let time = iso.string(from: r.timestamp)
-                    let duration = String(format: "%.1f", r.duration)
-                    return [time, duration, r.text, "\(r.text.count)"]
-                        .map { csvEscape($0) }.joined(separator: ",")
-                }
-                let csv = ([header] + rows).joined(separator: "\n")
-                save(csv, suggestedName: "voice-bubble-history.csv", contentType: .commaSeparatedText)
-            }
-        }
-    }
-
-    private func exportMarkdown() {
-        Task {
-            let allRecords = await historyStore.fetchAll()
-            await MainActor.run {
-                let formatter = DateFormatter()
-                formatter.dateFormat = "yyyy-MM-dd HH:mm"
-                var md = "# Voice Bubble 语音记录\n\n"
-                for r in allRecords {
-                    md += "### \(formatter.string(from: r.timestamp))\n\n"
-                    md += "\(r.text)\n\n"
-                    md += "_— \(Int(r.duration))s · \(r.text.count) 字_\n\n---\n\n"
-                }
-                save(md, suggestedName: "voice-bubble-history.md", contentType: .plainText)
-            }
-        }
-    }
-
-    private func save(_ content: String, suggestedName: String, contentType: UTType) {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [contentType]
-        panel.nameFieldStringValue = suggestedName
-        panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? content.write(to: url, atomically: true, encoding: .utf8)
-        showExportPopover = false
-    }
-
-    private func csvEscape(_ field: String) -> String {
-        if field.contains(",") || field.contains("\"") || field.contains("\n") {
-            return "\"" + field.replacingOccurrences(of: "\"", with: "\"\"") + "\""
-        }
-        return field
-    }
-
     private var emptyState: some View {
         VStack(spacing: 16) {
             ZStack {
@@ -451,16 +346,6 @@ struct VoiceHistoryView: View {
         .frame(maxWidth: 360)
         .glassCard(cornerRadius: 16)
         .padding(.bottom, 48)
-    }
-
-    private var noSearchResults: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "magnifyingglass").font(.system(size: 32, weight: .light)).foregroundColor(theme.textTertiary)
-            Text("没有找到匹配的记录").font(.system(size: 14, weight: .medium)).foregroundColor(theme.textPrimary)
-            Text("试试别的关键词").font(.system(size: 12)).foregroundColor(theme.textTertiary)
-        }
-        .padding(28)
-        .glassCard(cornerRadius: 14)
     }
 
     private func formatDuration(_ seconds: Double) -> String {
@@ -488,6 +373,7 @@ struct VoiceHistoryView: View {
 
 struct MeetingHistoryView: View {
     @EnvironmentObject private var theme: ThemeManager
+    @EnvironmentObject private var meetingService: MeetingService
     let savePath: String
 
     @State private var files: [MarkdownFile] = []
@@ -554,7 +440,7 @@ struct MeetingHistoryView: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 13)).foregroundColor(theme.textTertiary)
-                TextField("搜索会议文件...", text: $searchText)
+                TextField("搜索录音文件...", text: $searchText)
                     .textFieldStyle(.plain).font(.system(size: 13))
                     .foregroundColor(theme.textPrimary)
                 if !searchText.isEmpty {
@@ -587,6 +473,7 @@ struct MeetingHistoryView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
+            pruneOldFiles()
             scanFiles()
             startRefreshTimer()
         }
@@ -615,6 +502,29 @@ struct MeetingHistoryView: View {
         refreshTimer?.invalidate()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { _ in
             Task { @MainActor in scanFiles() }
+        }
+    }
+
+    /// Delete meeting markdown + audio files older than the user-configured
+    /// retention window (通用 设置 → 历史记录 → 会议记录缓存).
+    private func pruneOldFiles() {
+        let months = max(1, UserDefaults.standard.object(forKey: "meetingRetentionMonths") as? Int ?? 2)
+        guard let cutoff = Calendar.current.date(byAdding: .month, value: -months, to: Date()) else { return }
+        let fm = FileManager.default
+        let dirURL = URL(fileURLWithPath: savePath)
+        guard let contents = try? fm.contentsOfDirectory(
+            at: dirURL,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for url in contents {
+            let ext = url.pathExtension.lowercased()
+            guard ext == "md" || ext == "wav" || ext == "mov" else { continue }
+            let modDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? Date()
+            if modDate < cutoff {
+                try? fm.removeItem(at: url)
+            }
         }
     }
 
@@ -681,12 +591,53 @@ struct MeetingHistoryView: View {
         }
     }
 
+    /// True when `file` is the markdown of the meeting currently being
+    /// finalized — i.e. MeetingService is in `.finishing` / `.summarizing`
+    /// and its processing file matches this card. Matched by filename
+    /// (timestamped, unique per directory) to avoid path-normalization gaps.
+    private func isProcessing(_ file: MarkdownFile) -> Bool {
+        guard let activePath = meetingService.processingMarkdownPath else { return false }
+        switch meetingService.state {
+        case .finishing, .summarizing:
+            return URL(fileURLWithPath: activePath).lastPathComponent
+                == file.url.lastPathComponent
+        default:
+            return false
+        }
+    }
+
+    /// Stage-specific badge text. Empty when not processing.
+    private var processingBadgeText: String {
+        switch meetingService.state {
+        case .finishing: return "整理中"
+        case .summarizing: return "生成摘要中"
+        default: return ""
+        }
+    }
+
+    private var processingBadge: some View {
+        HStack(spacing: 4) {
+            ProgressView()
+                .controlSize(.mini)
+                .tint(theme.accent)
+            Text(processingBadgeText)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(theme.accent)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(theme.accent.opacity(0.12)))
+    }
+
     private func fileCard(_ file: MarkdownFile) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Image(systemName: "doc.text").font(.system(size: 13)).foregroundColor(theme.accentSecondary)
                 Text(file.name).font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.textPrimary).lineLimit(1)
+                if isProcessing(file) {
+                    processingBadge
+                }
                 Spacer()
                 Text(formatDate(file.modifiedDate)).font(.system(size: 11)).foregroundColor(theme.textTertiary)
                 Text(formatFileSize(file.fileSize)).font(.system(size: 11)).foregroundColor(theme.textTertiary)
@@ -732,7 +683,7 @@ struct MeetingHistoryView: View {
                     .foregroundColor(theme.accentSecondary.opacity(0.7))
             }
             VStack(spacing: 6) {
-                Text("还没有会议记录")
+                Text("还没有录音记录")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.textPrimary)
                 Text("同时按住左右 ⌘ 0.5 秒开始录制\n结束后将自动保存为 Markdown")
