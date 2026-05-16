@@ -4,6 +4,12 @@
   <img src="screenshot.png" alt="Voice Brother Screenshots" width="800">
 </p>
 
+<p align="center">
+  <a href="https://x.com/ZaneZaneZzZZ">X / Twitter</a> ·
+  <a href="https://www.xiaohongshu.com/user/profile/Zz302179383">小红书</a> ·
+  <a href="https://github.com/Zane456">GitHub</a>
+</p>
+
 macOS 原生语音输入工具。按住快捷键说话，松开后文字自动输入到光标位置。默认本地推理，也支持云端引擎。
 
 ## 功能
@@ -173,4 +179,11 @@ Voice Brother 需要以下 macOS 权限：
 
 ## License
 
-Private repository. All rights reserved.
+本项目采用 **[PolyForm Noncommercial License 1.0.0](LICENSE)** —— Source-Available（源码可见）协议。
+
+你**可以**：查看源码、修改、用于学习/研究/个人项目、基于本项目二次创作并分发。
+你**不可以**：将本项目或其衍生作品用于任何商业用途。商业授权请联系作者：[zz302179383@gmail.com](mailto:zz302179383@gmail.com)。
+
+任何分发或衍生作品**必须保留**以下署名（来自 LICENSE 文件的 `Required Notice`）：
+
+> Required Notice: Copyright (c) 2026 Zane456 — Voice Brother (https://github.com/Zane456/Voice-Bubble)
