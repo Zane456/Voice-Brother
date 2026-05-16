@@ -617,10 +617,10 @@ final class ThemeManager: ObservableObject {
 
 每步验证：
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Brother"
+cd "~/IDE project/Voice Brother"
 xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet
 pkill -x "VoiceBrother" 2>/dev/null || true
-open "/Users/zhangzheng/Library/Developer/Xcode/DerivedData/VoiceBrother-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBrother.app"
+open "~/Library/Developer/Xcode/DerivedData/VoiceBrother-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBrother.app"
 ```
 
 ---

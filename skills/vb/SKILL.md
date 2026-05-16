@@ -11,7 +11,7 @@ Navigate to project, read TODO, build and launch.
 
 1. Set working directory:
    ```
-   cd "/Users/zhangzheng/IDE project/Voice Brother"
+   cd "~/IDE project/Voice Brother"
    ```
 
 2. Read project instructions:
@@ -24,11 +24,11 @@ Navigate to project, read TODO, build and launch.
 
 4. Build and launch:
    ```bash
-   cd "/Users/zhangzheng/IDE project/Voice Brother"
+   cd "~/IDE project/Voice Brother"
    xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet 2>/dev/null
    pkill -x "VoiceBrother" 2>/dev/null || true
    sleep 1
-   open "/Users/zhangzheng/Library/Developer/Xcode/DerivedData/VoiceBrother-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBrother.app"
+   open "~/Library/Developer/Xcode/DerivedData/VoiceBrother-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBrother.app"
    ```
 
 5. Report build result (success/failure) and confirm app launched.

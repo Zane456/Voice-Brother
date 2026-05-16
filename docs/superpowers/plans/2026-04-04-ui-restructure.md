@@ -76,7 +76,7 @@ Also update `selectedTab` default to `.general`:
 
 - [ ] **Step 3: Build verify**
 
-Run: `cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
+Run: `cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
 
 Expected: Build errors because `GeneralTab` and `RecordTab` don't exist yet. This is expected — proceed to Task 2.
 
@@ -245,7 +245,7 @@ Note: Keep the file named `SettingsTab.swift` — only the struct name changes t
 
 - [ ] **Step 2: Build verify**
 
-Run: `cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
+Run: `cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
 
 Expected: Errors about missing `RecordTab` — that's fine. No errors about `GeneralTab` should appear.
 
@@ -494,7 +494,7 @@ struct VoiceTab: View {
 
 - [ ] **Step 3: Build verify**
 
-Run: `cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
+Run: `cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
 
 Expected: Only `RecordTab` not found error. All other compilation should pass.
 
@@ -785,7 +785,7 @@ struct RecordTab: View {
 
 - [ ] **Step 2: Build verify**
 
-Run: `cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
+Run: `cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
 
 Expected: BUILD SUCCEEDED
 
@@ -885,7 +885,7 @@ VStack(alignment: .leading, spacing: 28) {
 
 Run:
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -10
+cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -10
 ```
 
 Expected: BUILD SUCCEEDED
@@ -901,7 +901,7 @@ If build fails, read error output, fix issues, rebuild. Common issues:
 
 ```bash
 pkill -x "VoiceBubble" 2>/dev/null || true
-open "/Users/zhangzheng/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
+open "~/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
 ```
 
 - [ ] **Step 4: Verify UI**

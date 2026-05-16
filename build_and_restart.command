@@ -3,7 +3,7 @@
 # 由 Claude 生成，每次改完代码双击即可
 
 set -e
-cd "/Users/zhangzheng/IDE project/Voice Brother"
+cd "$HOME/IDE project/Voice Brother"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo " VoiceBrother 构建 & 重启"

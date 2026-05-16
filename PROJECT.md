@@ -17,7 +17,7 @@ Voice Brother 采用 Swift + SwiftUI + MLX，实现完全原生的 macOS 应用�
 
 ### 前身项目参考
 
-- **Voice Aura**（Python 版）：位于 `/Users/zhangzheng/IDE project/Voice-Aura/`，所有现有功能均需在 Voice Brother 中重现
+- **Voice Aura**（Python 版）：位于 `~/IDE project/Voice-Aura/`，所有现有功能均需在 Voice Brother 中重现
 - **Type4Me**（joewongjc/type4me）：UI 布局参考，左侧导航栏 + 右侧内容面板的设置界面结构
 - **TypeNo**（marswaveai/TypeNo）：极简交互参考
 

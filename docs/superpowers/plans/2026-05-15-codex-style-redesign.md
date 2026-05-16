@@ -22,7 +22,7 @@
   ```
 - **No unit tests in this plan**: the project has no test suite for UI; verification is build-success + visual checkpoint after restart. Each task lists the explicit thing to look at on screen.
 - **Commit per task** with the message shown.
-- **Working directory in shell commands**: always quote because of the space — `cd "/Users/zhangzheng/IDE project/Voice Bubble"`.
+- **Working directory in shell commands**: always quote because of the space — `cd "~/IDE project/Voice Bubble"`.
 
 ---
 
@@ -77,7 +77,7 @@ extension View {
 - [ ] **Step 1.3: Build to verify both files compile and pbxproj auto-discovers them**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 
@@ -190,7 +190,7 @@ struct CodexDestructiveButtonStyle: ButtonStyle {
 - [ ] **Step 2.2: Build (no app behavior change yet — file only adds new types)**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 
@@ -300,7 +300,7 @@ struct CodexBadge: View {
 - [ ] **Step 3.2: Build**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 
@@ -490,7 +490,7 @@ extension AppTheme {
 - [ ] **Step 4.2: Build — expect failures in 4 places**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | grep -E "(error:|warning:)" | head -40
 ```
 
@@ -552,7 +552,7 @@ private struct GlassCardModifier: ViewModifier {
 - [ ] **Step 5.2: Build**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | grep -E "error:" | head -20
 ```
 
@@ -575,7 +575,7 @@ git add VoiceBubble/Frontend/Components/ColorExtension.swift
 - [ ] **Step 6.1: Delete GlassmorphismBackground.swift**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 git rm VoiceBubble/Frontend/Components/GlassmorphismBackground.swift
 ```
 
@@ -594,7 +594,7 @@ Replace with:
 - [ ] **Step 6.3: Build**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | grep -E "error:" | head -20
 ```
 
@@ -712,7 +712,7 @@ Replace with:
 - [ ] **Step 7.3: Build**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 
@@ -739,7 +739,7 @@ Issues are likely cosmetic (cards may still have old fill etc.) — those are ex
 - [ ] **Step 7.5: Commit Tasks 4-7 together**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 git add VoiceBubble/Shared/ThemeManager.swift \
         VoiceBubble/Frontend/Components/ColorExtension.swift \
         VoiceBubble/Frontend/MainWindow.swift
@@ -804,7 +804,7 @@ struct CustomToggleStyle: ToggleStyle {
 - [ ] **Step 8.2: Build + restart**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet \
   && pkill -x "VoiceBubble" 2>/dev/null \
   ; open "$HOME/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
@@ -1006,7 +1006,7 @@ Find the `private func resizePanelToFitContent()` block (around line 340), and i
 - [ ] **Step 9.5: Build + restart**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet \
   && pkill -x "VoiceBubble" 2>/dev/null \
   ; open "$HOME/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
@@ -1053,7 +1053,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 Run this to enumerate them:
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 grep -n "Capsule().fill" VoiceBubble/Frontend/Tabs/Sections/VoiceSettingsSection.swift
 grep -n ".background(.*RoundedRectangle.*\\.fill(theme.accent" VoiceBubble/Frontend/Tabs/Sections/VoiceSettingsSection.swift
 ```
@@ -1135,7 +1135,7 @@ Find the `private func provenanceBadge(isCloud: Bool) -> some View` (around line
 - [ ] **Step 10.5: Build + restart**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet \
   && pkill -x "VoiceBubble" 2>/dev/null \
   ; open "$HOME/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
@@ -1190,7 +1190,7 @@ Apply the same patterns as Task 10:
 - [ ] **Step 11.3: Build + restart + visual check**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet \
   && pkill -x "VoiceBubble" 2>/dev/null \
   ; open "$HOME/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
@@ -1244,7 +1244,7 @@ HStack {
 - [ ] **Step 12.5: Build + restart + visual check**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet \
   && pkill -x "VoiceBubble" 2>/dev/null \
   ; open "$HOME/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
@@ -1272,7 +1272,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 13.1: Find and remove the theme picker UI block in AboutTab**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 grep -n "AppTheme\\.selectableCases\\|pickerSwatch\\|外观" VoiceBubble/Frontend/Tabs/AboutTab.swift
 ```
 
@@ -1300,7 +1300,7 @@ Apply the same migration pattern (Capsule buttons → CodexButtonStyles, IDs →
 - [ ] **Step 13.4: Build + restart + visual check**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet \
   && pkill -x "VoiceBubble" 2>/dev/null \
   ; open "$HOME/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
@@ -1339,7 +1339,7 @@ Search for any hardcoded `Color.white` or `Color(hex: ...)` in OnboardingView. R
 - [ ] **Step 14.3: Build + restart + visual check**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet \
   && pkill -x "VoiceBubble" 2>/dev/null \
   ; open "$HOME/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
@@ -1398,7 +1398,7 @@ NSStatusItem button titles inherit the system menu bar font (proportional). True
 - [ ] **Step 15.3: Build + restart + visual check**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet \
   && pkill -x "VoiceBubble" 2>/dev/null \
   ; open "$HOME/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
@@ -1428,7 +1428,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 16.1: Grep for any references to removed theme properties**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 grep -rn "theme.bubbleColors\\|theme.bubbleCoreOpacity\\|theme.bubbleGlowOpacity\\|theme.bubbleHighlightOpacity\\|theme.bubbleRingOpacity\\|theme.bgGradientColors\\|theme.decoration" VoiceBubble/
 ```
 
@@ -1445,7 +1445,7 @@ Triage the results: any hex that matches the Codex palette is fine. Any hex from
 - [ ] **Step 16.3: Run a final clean build and restart**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild clean build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet \
   && pkill -x "VoiceBubble" 2>/dev/null \
   ; open "$HOME/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"

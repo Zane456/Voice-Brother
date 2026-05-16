@@ -34,7 +34,7 @@
 保留 Voice Aura 的 **Glassmorphism 风格**，色板和动画参数从 Python 版搬运（见 PROJECT.md 3.2）。布局结构参考 Type4Me 的两栏式设计。注意：Voice Aura 的配色是**自定义色板**，不是系统语义色。
 
 ### 从 Python 版翻译
-`keyboard_listener.py`、`voice_service.py`、`config.py`、`meeting_service.py` 的核心逻辑可直接翻译。参考 PROJECT.md 第九章"可复用的代码/逻辑"表格。Python 版源码在 `/Users/zhangzheng/IDE project/Voice-Aura/`。
+`keyboard_listener.py`、`voice_service.py`、`config.py`、`meeting_service.py` 的核心逻辑可直接翻译。参考 PROJECT.md 第九章"可复用的代码/逻辑"表格。Python 版源码在 `~/IDE project/Voice-Aura/`。
 
 ## Skill 路由
 
@@ -57,7 +57,7 @@
 | 查 speech-swift 库的最新 API 或 issue | `zread`（读 GitHub 仓库）或 `gh` CLI |
 | 查 Apple 文档 / SwiftUI API | `perplexity_search` → `WebFetch` 验证 |
 | 搜索 macOS 开发最佳实践 | `perplexity_search` |
-| 读 Voice Aura Python 源码（翻译参考） | 直接 `Read` 工具读 `/Users/zhangzheng/IDE project/Voice-Aura/` |
+| 读 Voice Aura Python 源码（翻译参考） | 直接 `Read` 工具读 `~/IDE project/Voice-Aura/` |
 | 跨会话搜索历史上下文 | `claude-mem` search（不传 project 参数可全量检索） |
 
 ## 开发阶段
@@ -122,14 +122,14 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 6. **改完后必须自动构建并重启应用**（用户不使用 Xcode，所有操作由命令行完成）：
    ```bash
    # 1. 构建
-   cd "/Users/zhangzheng/IDE project/Voice Brother"
+   cd "~/IDE project/Voice Brother"
    xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet
 
    # 2. 关闭正在运行的旧实例
    pkill -x "VoiceBrother" 2>/dev/null || true
 
    # 3. 启动新构建的应用
-   open "/Users/zhangzheng/Library/Developer/Xcode/DerivedData/VoiceBrother-dopowvwzswipvocptpcwzjpqinvh/Build/Products/Debug/VoiceBrother.app"
+   open "~/Library/Developer/Xcode/DerivedData/VoiceBrother-dopowvwzswipvocptpcwzjpqinvh/Build/Products/Debug/VoiceBrother.app"
    ```
    **每次修改代码后都必须执行这三步**，不要只构建不重启，也不要让用户手动去操作。
 

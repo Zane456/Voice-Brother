@@ -107,7 +107,7 @@ enum ASRModel: String, CaseIterable, Identifiable {
 
 - [ ] **Step 3: Build to verify no regressions (expect exhaustive-switch errors)**
 
-Run: `cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | head -30`
+Run: `cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | head -30`
 
 Expected: Compiler errors in `VoiceService.swift` for non-exhaustive switch on `ASRModel`. This is correct — we'll fix them in Task 4.
 
@@ -581,7 +581,7 @@ This method (lines 811-816) is no longer needed — `start()` now branches direc
 
 - [ ] **Step 10: Build to check for remaining compile errors**
 
-Run: `cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | head -40`
+Run: `cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | head -40`
 
 Expected: May still have errors in MeetingService (fixed in Task 5). VoiceService should compile cleanly.
 
@@ -703,7 +703,7 @@ self.asrEngine = nil  // Don't unload — shared with voice service
 
 - [ ] **Step 5: Build and verify**
 
-Run: `cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
+Run: `cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
 
 Expected: Clean build (0 errors).
 
@@ -762,7 +762,7 @@ If xcodegen is not installed, the project.yml changes are informational — the 
 
 - [ ] **Step 4: Build and verify**
 
-Run: `cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
+Run: `cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
 
 Expected: Clean build.
 
@@ -827,7 +827,7 @@ if let currentModel = ASRModel(rawValue: configManager.model), currentModel.isAp
 
 - [ ] **Step 2: Build and verify**
 
-Run: `cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
+Run: `cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>&1 | tail -5`
 
 Expected: Clean build.
 
@@ -845,7 +845,7 @@ git commit -m "feat: update VoiceSettingsSection UI for Apple ASR model option"
 - [ ] **Step 1: Full clean build**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 
@@ -853,7 +853,7 @@ xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 
 ```bash
 pkill -x "VoiceBubble" 2>/dev/null || true
-open "/Users/zhangzheng/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
+open "~/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
 ```
 
 - [ ] **Step 3: Manual verification checklist**

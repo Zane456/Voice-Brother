@@ -14,7 +14,7 @@
 
 **构建命令（每个任务用）：**
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 Expected: 命令退出码 0，无报错输出。
@@ -82,7 +82,7 @@ Expected: exit 0。
 - [ ] **Step 7: 提交**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 git add VoiceBubble/Shared/AppConfig.swift VoiceBubble/Backend/Services/ConfigManager.swift
 git commit -m "feat(config): add meetingScreenRecording flag"
 ```
@@ -443,7 +443,7 @@ Expected: exit 0。新文件已纳入编译。
 - [ ] **Step 7: 提交**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 git add VoiceBubble/Backend/Meeting/MeetingScreenRecorder.swift VoiceBubble.xcodeproj/project.pbxproj
 git commit -m "feat(meeting): add MeetingScreenRecorder (AVAssetWriter wrapper)"
 ```
@@ -717,7 +717,7 @@ Expected: exit 0。
 - [ ] **Step 9: 提交**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 git add VoiceBubble/Backend/Meeting/MeetingService.swift
 git commit -m "feat(meeting): wire screen recording into MeetingService"
 ```
@@ -751,7 +751,7 @@ Expected: exit 0。
 - [ ] **Step 3: 提交**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 git add VoiceBubble/Frontend/Tabs/HistoryTab.swift
 git commit -m "feat(history): prune old screen-recording .mov files"
 ```
@@ -828,7 +828,7 @@ Expected: exit 0。
 - [ ] **Step 4: 提交**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 git add VoiceBubble/Frontend/Tabs/MeetingTab.swift
 git commit -m "feat(meeting): add screen recording toggle to MeetingTab"
 ```
@@ -842,10 +842,10 @@ git commit -m "feat(meeting): add screen recording toggle to MeetingTab"
 - [ ] **Step 1: 构建并重启应用**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 pkill -x "VoiceBubble" 2>/dev/null || true
-open "/Users/zhangzheng/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
+open "~/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
 ```
 Expected: 构建 exit 0，应用启动。
 

@@ -12,7 +12,7 @@
 
 **构建命令（每个任务用）：**
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 Expected: 命令退出码 0，无报错输出。
@@ -118,7 +118,7 @@ Expected: 命令退出码 0，无报错输出。
 
 Run:
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
+cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 Expected: 退出码 0。
 
@@ -234,7 +234,7 @@ struct MeetingHistoryView: View {
 
 Run:
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
+cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 Expected: 退出码 0。
 
@@ -351,7 +351,7 @@ git commit -m "feat(history): badge in-progress meeting file card"
 
 Run:
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
+cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 Expected: 退出码 0。
 
@@ -471,7 +471,7 @@ git commit -m "feat(config): persist lastHistoryKind"
 
 Run:
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
+cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 Expected: 退出码 0。
 
@@ -539,7 +539,7 @@ git commit -m "feat(history): record lastHistoryKind on task completion"
 
 Run:
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
+cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 Expected: 退出码 0。
 
@@ -587,7 +587,7 @@ git commit -m "feat(history): open on last completed task's segment"
 
 Run:
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
+cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 Expected: 退出码 0。
 
@@ -748,7 +748,7 @@ git commit -m "refactor(voice): drop redundant 语音设置 section header"
 
 Run:
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble" && grep -rn "会议" VoiceBubble/ --include="*.swift"
+cd "~/IDE project/Voice Bubble" && grep -rn "会议" VoiceBubble/ --include="*.swift"
 ```
 Expected: 剩余命中应**只**包含以下「保留项」——
 - `Types.swift:505`、`MeetingSummarizer.swift` 的 LLM 提示词正文（73/135/152 附近）
@@ -762,7 +762,7 @@ Expected: 剩余命中应**只**包含以下「保留项」——
 
 Run:
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
+cd "~/IDE project/Voice Bubble" && xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 ```
 Expected: 退出码 0。
 
@@ -782,10 +782,10 @@ git commit -m "refactor(ui): rename 会议 to 对话记录 across user-facing st
 - [ ] **Step 1: 构建、关闭旧实例、启动新构建**
 
 ```bash
-cd "/Users/zhangzheng/IDE project/Voice Bubble"
+cd "~/IDE project/Voice Bubble"
 xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
 pkill -x "VoiceBubble" 2>/dev/null || true
-open "/Users/zhangzheng/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
+open "~/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
 ```
 Expected: 构建退出码 0，应用启动。
 
