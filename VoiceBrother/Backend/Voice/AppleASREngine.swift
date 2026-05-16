@@ -2,9 +2,10 @@ import Foundation
 import Speech
 
 /// Apple SFSpeechRecognizer wrapper conforming to ASREngineProtocol.
-/// On-device only recognition. Failable init — returns nil if on-device recognition
-/// isn't supported on this hardware OR if the zh-Hans on-device language model isn't
-/// installed (System Settings → 键盘 → 听写 → 添加中文).
+/// On-device only recognition. Failable init — returns nil only when the device
+/// can't run on-device recognition for any of Chinese/English/Japanese at all.
+/// A missing *individual* language asset does not fail init; callers check the
+/// selected language with `isLanguageReady(_:)` to give a precise error.
 ///
 /// IMPORTANT: transcribe() blocks the calling thread with a semaphore. Must be called
 /// from a background thread (Task.detached).
@@ -16,7 +17,8 @@ final class AppleASREngine: ASREngineProtocol {
     private let recognizers: [String: SFSpeechRecognizer]
     /// Used when `language` is nil (auto-detect) or maps to a locale whose
     /// on-device asset isn't installed. SFSpeechRecognizer cannot auto-detect
-    /// across languages, so auto-detect meetings fall back to Chinese.
+    /// across languages, so auto-detect meetings fall back to this — Chinese
+    /// when available, otherwise the first of English/Japanese that is.
     private let defaultRecognizer: SFSpeechRecognizer
 
     /// Maps MeetingLanguage's `asrLanguageHint` values to BCP-47 locale IDs.
@@ -51,14 +53,27 @@ final class AppleASREngine: ASREngineProtocol {
             }
             built[hint] = recognizer
         }
-        // Chinese is the required baseline: it's what VoiceService pre-checks and
-        // the auto-detect fallback. Without it the engine can't realistically run.
-        guard let chinese = built["Chinese"] else {
-            NSLog("[AppleASREngine] zh-Hans on-device recognizer unavailable — engine init failed. Open System Settings → 键盘 → 听写 → 添加中文 (简体).")
+        // The engine needs at least one usable on-device recognizer. Chinese is
+        // the preferred default (it's the auto-detect fallback in transcribe()),
+        // but it is NOT a hard requirement: an English/Japanese-only user must
+        // still be able to run. VoiceService's per-language preflight surfaces a
+        // precise error if the *selected* language specifically is missing —
+        // returning nil here would mislabel that as "device unsupported".
+        guard let fallback = built["Chinese"] ?? built["English"] ?? built["Japanese"] else {
+            NSLog("[AppleASREngine] No on-device recognizer available — engine init failed. Open System Settings → 键盘 → 听写 to add a dictation language.")
             return nil
         }
         self.recognizers = built
-        self.defaultRecognizer = chinese
+        self.defaultRecognizer = fallback
+    }
+
+    /// Whether the on-device asset for the given `asrLanguageHint`
+    /// ("Chinese"/"English"/"Japanese") is installed and ready to transcribe.
+    /// A missing key means the recognizer couldn't be created on this device at
+    /// all; a present-but-`!isAvailable` recognizer means the language asset
+    /// hasn't been added in System Settings → Keyboard → Dictation.
+    func isLanguageReady(_ hint: String) -> Bool {
+        recognizers[hint]?.isAvailable ?? false
     }
 
     func transcribe(audio: [Float], sampleRate: Int, language: String?, context: String?) -> String {
@@ -77,7 +92,7 @@ final class AppleASREngine: ASREngineProtocol {
         defer { try? FileManager.default.removeItem(at: tempFileURL) }
 
         // Pick the recognizer for the requested language. nil (auto-detect) or
-        // an unmapped/uninstalled language falls back to Chinese — SFSpeechRecognizer
+        // an unmapped language falls back to `defaultRecognizer` — SFSpeechRecognizer
         // can't auto-detect, so a specific 会议语言 must be chosen for ja/en.
         let recognizer = recognizers[language ?? ""] ?? defaultRecognizer
 

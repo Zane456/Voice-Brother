@@ -342,12 +342,14 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         }
 
         // Detect the very common "language asset not installed" case up front. The Speech
-        // framework will silently return empty strings if the zh-Hans on-device asset is
+        // framework will silently return empty strings if the selected on-device asset is
         // missing — we'd rather tell the user exactly where to go than leave them puzzled
-        // by transcripts that always come back blank.
-        if let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-Hans")),
-           !recognizer.isAvailable {
-            state = .error("中文语音模型未就绪，请在「系统设置 → 键盘 → 听写」中添加中文（简体）后重试")
+        // by transcripts that always come back blank. Check the *selected* input language,
+        // not a hard-coded zh-Hans, so English/Japanese users aren't blocked by a missing
+        // Chinese asset they never use.
+        let inputLanguage = configManager.voiceInputLanguage
+        if !engine.isLanguageReady(inputLanguage.asrLanguageHint) {
+            state = .error("\(inputLanguage.displayName)语音模型未就绪，请在「系统设置 → 键盘 → 听写」中添加\(inputLanguage.displayName)后重试")
             return
         }
 
