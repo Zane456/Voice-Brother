@@ -6,7 +6,7 @@
   <img src="assets/hero.png" alt="Voice Brother — macOS 中文语音输入工具，按住说话松开输入" width="640" />
 </p>
 
-> *「按住说话,松开输入。你的声音不离开这台 Mac。」*
+> *「日常说话,松开即成文;整场会议,一键录到底。」*
 
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-orange.svg)](LICENSE)
 [![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-black.svg)]()
@@ -165,7 +165,7 @@ Voice Brother 站在 [mlx-swift](https://github.com/ml-explore/mlx-swift)、`spe
 
 <div align="center">
 
-> *「按住说话,松开输入。你的声音不离开这台 Mac。」*
+> *「日常说话,松开即成文;整场会议,一键录到底。」*
 
 <br>
 
