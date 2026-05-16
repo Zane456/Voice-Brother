@@ -606,16 +606,24 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
             // Screen recording: configure the same stream to also emit video,
             // downscaled to ≤1080p at 10fps to keep the .mov archive small.
             if screenRecordingEnabled, let videoPath = videoFilePath {
+                let quality = configManager.meetingVideoQuality
+                // Capture at the display's native pixel resolution (not its
+                // point size) so Retina screens aren't softened before the
+                // quality tier even applies its height cap.
+                let mode = CGDisplayCopyDisplayMode(display.displayID)
+                let nativeW = mode?.pixelWidth ?? display.width
+                let nativeH = mode?.pixelHeight ?? display.height
                 let videoSize = Self.screenRecordingSize(
-                    displayWidth: display.width,
-                    displayHeight: display.height
+                    pixelWidth: nativeW,
+                    pixelHeight: nativeH,
+                    quality: quality
                 )
                 config.width = Int(videoSize.width)
                 config.height = Int(videoSize.height)
-                config.minimumFrameInterval = CMTime(value: 1, timescale: 10)
+                config.minimumFrameInterval = CMTime(value: 1, timescale: 24)
                 config.pixelFormat = kCVPixelFormatType_32BGRA
                 let recorder = MeetingScreenRecorder(outputURL: URL(fileURLWithPath: videoPath))
-                recorder.start(displaySize: videoSize)
+                recorder.start(displaySize: videoSize, bitrate: quality.bitrate)
                 self.screenRecorder = recorder
             }
 
@@ -757,7 +765,6 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         // Auto-summarize if meeting LLM is configured and enabled — but only
         // when there's actual content to summarise.
         if !isEmptyMeeting, configManager.meetingLLMEnabled,
-           !configManager.meetingSummaryPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            let path = markdownFilePath {
             state = .summarizing
             summaryError = nil
@@ -768,8 +775,6 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 summaryError = error.localizedDescription
                 print("[MeetingService] Summarization failed: \(error)")
             }
-        } else if !isEmptyMeeting && configManager.meetingLLMEnabled {
-            print("[MeetingService] LLM enabled but prompt is empty — skipping summarization.")
         }
 
         // Re-enable single-key voice input now that finalization is complete
@@ -861,16 +866,18 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
 
     // MARK: - Screen Recording
 
-    /// Pixel size for the screen-recording video: the display's aspect ratio
-    /// with height capped at 1080, both dimensions rounded to even numbers
-    /// (H.264 requires even width/height).
-    private static func screenRecordingSize(displayWidth: Int, displayHeight: Int) -> CGSize {
-        guard displayWidth > 0, displayHeight > 0 else {
+    /// Pixel size for the screen-recording video: the display's native pixel
+    /// aspect ratio, with height capped per the chosen quality tier (a `nil`
+    /// cap means native resolution). Both dimensions are rounded to even
+    /// numbers (H.264 requires even width/height).
+    private static func screenRecordingSize(pixelWidth: Int, pixelHeight: Int,
+                                            quality: MeetingVideoQuality) -> CGSize {
+        guard pixelWidth > 0, pixelHeight > 0 else {
             return CGSize(width: 1920, height: 1080)
         }
-        let cappedHeight = min(displayHeight, 1080)
-        let aspect = Double(displayWidth) / Double(displayHeight)
-        var h = cappedHeight
+        let aspect = Double(pixelWidth) / Double(pixelHeight)
+        var h = pixelHeight
+        if let cap = quality.maxHeight { h = min(h, cap) }
         var w = Int((Double(h) * aspect).rounded())
         if w % 2 != 0 { w += 1 }
         if h % 2 != 0 { h += 1 }

@@ -1,3 +1,4 @@
+import CoreGraphics
 import SwiftUI
 
 /// Meeting (long recording + AI summary) tab. Top section is the prominent
@@ -27,6 +28,7 @@ struct MeetingTab: View {
                 VStack(alignment: .leading, spacing: 24) {
                     recordingControlCard
                     screenRecordingToggleCard
+                    screenRecordingQualityCard
                     openFolderButton
                     if let err = meetingService.summaryError {
                         summaryErrorCard(err)
@@ -150,20 +152,79 @@ struct MeetingTab: View {
             }
         }()
 
+        // Non-prompting check of the screen-recording TCC permission. When the
+        // toggle is on but permission is missing, the meeting silently records
+        // mic-only — surface that as an inline warning instead.
+        let missingPermission = configManager.meetingScreenRecording
+            && !CGPreflightScreenCaptureAccess()
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("屏幕录制")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.textPrimary)
+                    Text("开启后全程录制主显示器全屏，存为视频文件")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Toggle("", isOn: $configManager.meetingScreenRecording)
+                    .toggleStyle(CustomToggleStyle())
+                    .labelsHidden()
+            }
+            if missingPermission {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                    Text("未授予屏幕录制权限，本次将只录麦克风、不录屏")
+                        .font(.system(size: 11))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundColor(theme.stop)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+        .disabled(meetingActive)
+        .opacity(meetingActive ? 0.5 : 1)
+    }
+
+    /// 录制清晰度 选择。同 屏幕录制 开关一样，会议进行中禁用——清晰度在
+    /// 会议开始时读一次快照。
+    private var screenRecordingQualityCard: some View {
+        let meetingActive: Bool = {
+            switch meetingService.state {
+            case .idle, .error: return false
+            default: return true
+            }
+        }()
+        let qualityBinding = Binding<MeetingVideoQuality>(
+            get: { configManager.meetingVideoQuality },
+            set: { configManager.meetingVideoQuality = $0 }
+        )
         return HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("屏幕录制")
+                Text("录制清晰度")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(theme.textPrimary)
-                Text("开启后全程录制主显示器全屏，存为视频文件")
+                Text("原画最清晰、文件最大；标清最省空间")
                     .font(.system(size: 11))
                     .foregroundColor(theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            Toggle("", isOn: $configManager.meetingScreenRecording)
-                .toggleStyle(CustomToggleStyle())
-                .labelsHidden()
+            Picker("", selection: qualityBinding) {
+                ForEach(MeetingVideoQuality.allCases) { q in
+                    Text(q.displayName).tag(q)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .tint(theme.accent)
+            .fixedSize()
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

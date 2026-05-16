@@ -61,7 +61,7 @@ struct VoiceBubbleApp: App {
                 .environmentObject(themeManager)
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 960, height: 800)
+        .defaultSize(width: 672, height: 800)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("关于 Voice Bubble") {
@@ -87,6 +87,20 @@ struct VoiceBubbleApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Force-load the bundle's AppIcon at launch. Without this, both
+        // `NSApp.applicationIconImage` (used in the sidebar avatar, About
+        // hero, and onboarding) and the Dock badge can serve a Launch
+        // Services-cached version of the previous icon — even after the
+        // .icns inside the bundle has been replaced. Reading the .icns
+        // straight from `Bundle.main` and re-asserting it here forces the
+        // running NSApp instance to use the freshest art.
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let img = NSImage(contentsOf: url) {
+            NSApp.applicationIconImage = img
+        }
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false

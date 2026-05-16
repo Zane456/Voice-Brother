@@ -28,10 +28,8 @@ struct VoiceSettingsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Input Behavior toggles (moved from 通用 tab)
-            inputBehaviorCard
-
-            SectionHeader(title: "语音设置")
+            // 输入行为 toggles (语气词过滤/空格重定位/剪贴板保护) all live in
+            // the 通用 tab now — gathered in one place.
 
             // Trigger Key
             triggerKeyCard
@@ -63,84 +61,6 @@ struct VoiceSettingsSection: View {
         }
     }
 
-    // MARK: - Input Behavior
-
-    private var inputBehaviorCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "输入行为")
-
-            VStack(spacing: 0) {
-                toggleRow(title: "语气词过滤",
-                          subtitle: "自动删除「嗯」「啊」「那个」等口头禅",
-                          isOn: Binding(get: { voiceService.removeFillers }, set: { voiceService.removeFillers = $0 }))
-
-                Divider().padding(.horizontal, 16)
-
-                toggleRow(title: "空格重定位",
-                          subtitle: "录音中按空格键在鼠标位置点击，切换输入位置",
-                          isOn: Binding(get: { voiceService.spaceReposition }, set: { voiceService.spaceReposition = $0 }))
-
-                Divider().padding(.horizontal, 16)
-
-                toggleRow(title: "剪贴板保护",
-                          subtitle: "保留之前复制的内容（图片、文件等），关闭则直接覆盖",
-                          isOn: $configManager.preserveClipboard)
-
-                Divider().padding(.horizontal, 16)
-
-                VStack(spacing: 0) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("实时预览")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(theme.textPrimary)
-                            Text("录音时在悬浮窗旁边实时显示转写文字")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.textTertiary)
-                        }
-                        Spacer()
-                        Toggle("", isOn: $configManager.streamingPreview)
-                            .toggleStyle(CustomToggleStyle())
-                            .labelsHidden()
-                    }
-                    .padding(16)
-
-                    if configManager.streamingPreview {
-                        Divider().padding(.horizontal, 16)
-
-                        HStack {
-                            Text("预览字号")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(theme.textPrimary)
-                            Spacer()
-                            Text("\(Int(configManager.previewFontSize))")
-                                .font(.system(size: 13, weight: .medium).monospacedDigit())
-                                .foregroundColor(theme.textPrimary)
-                                .frame(width: 24)
-                            Slider(value: $configManager.previewFontSize, in: 12...28, step: 1)
-                                .frame(width: 120)
-                        }
-                        .padding(16)
-                        .transition(.opacity)
-                    }
-                }
-            }
-            .glassCard()
-        }
-    }
-
-    private func toggleRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13, weight: .semibold)).foregroundColor(theme.textPrimary)
-                Text(subtitle).font(.system(size: 11)).foregroundColor(theme.textTertiary)
-            }
-            Spacer()
-            Toggle("", isOn: isOn).toggleStyle(CustomToggleStyle()).labelsHidden()
-        }
-        .padding(16)
-    }
-
     // MARK: - Provenance Badge
 
     private func provenanceBadge(isCloud: Bool) -> some View {
@@ -150,22 +70,41 @@ struct VoiceSettingsSection: View {
 
     // MARK: - Trigger Key
 
+    /// Mirrors `MeetingTab.recordingControlCard`'s layout (56pt badge + text +
+    /// trailing control) so the 语音输入 card matches the 对话记录 card in size
+    /// and style. The trailing control here is the trigger-key Picker.
     private var triggerKeyCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("录音按键")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.textPrimary)
-                    .frame(width: 80, alignment: .leading)
-
-                Picker("", selection: $configManager.triggerKey) {
-                    ForEach(TriggerKey.allCases) { key in
-                        Text(key.displayName).tag(key.rawValue)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
+        HStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(theme.accent.opacity(0.12))
+                    .frame(width: 56, height: 56)
+                BrandGlyph(color: theme.accent, size: 26)
             }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("录音按键")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(theme.textPrimary)
+
+                (Text("长按 ")
+                    + Text(triggerKeyName).font(.system(size: 13, weight: .bold)).foregroundColor(theme.textPrimary)
+                    + Text(" 录音 · 松手自动输入文字"))
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            Picker("", selection: $configManager.triggerKey) {
+                ForEach(TriggerKey.allCases) { key in
+                    Text(key.displayName).tag(key.rawValue)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
             .onChange(of: configManager.triggerKey) { _, newValue in
                 guard newValue != previousTriggerKey else { return }
                 previousTriggerKey = newValue
@@ -177,15 +116,15 @@ struct VoiceSettingsSection: View {
                     }
                 }
             }
-
-            Text("长按开始录音，松手后自动录入文字。默认使用右 Option ⌥（避免与中文输入法切换冲突）")
-                .font(.system(size: 12))
-                .foregroundColor(theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(16)
+        .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
+    }
+
+    /// Display name of the currently selected trigger key, for the caption.
+    private var triggerKeyName: String {
+        TriggerKey(rawValue: configManager.triggerKey)?.displayName ?? "录音键"
     }
 
     // MARK: - ASR Model Card
@@ -207,6 +146,7 @@ struct VoiceSettingsSection: View {
                 Text("本地模型").tag("local")
                 Text("云端模型").tag("cloud")
             }
+            .labelsHidden()
             .pickerStyle(.segmented)
             .tint(theme.accent)
             .onChange(of: configManager.asrProviderType) { oldValue, newValue in
@@ -232,8 +172,9 @@ struct VoiceSettingsSection: View {
         VStack(alignment: .leading, spacing: 10) {
             // Three-way segmented picker — all options visible at once instead of
             // hidden behind a menu. Use displayName (含极速/精确/Apple) for clarity.
+            // Apple (on-device, instant) and 0.6B 极速 first, heavier 1.7B 精确 last.
             Picker("", selection: $configManager.model) {
-                ForEach(ASRModel.allCases) { model in
+                ForEach([ASRModel.apple, ASRModel.small, ASRModel.large]) { model in
                     Text(model.displayName).tag(model.rawValue)
                 }
             }
@@ -274,22 +215,14 @@ struct VoiceSettingsSection: View {
 
                 Spacer()
 
-                Button(action: {
-                    if asrModelLoaded {
-                        voiceService.stop()
-                    } else {
-                        voiceService.start()
+                Toggle("", isOn: Binding(
+                    get: { asrModelLoaded },
+                    set: { isOn in
+                        if isOn { voiceService.start() } else { voiceService.stop() }
                     }
-                }) {
-                    Text(asrActionLabel)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .background(asrModelLoaded ? theme.stop : theme.accent)
-                        .cornerRadius(8)
-                }
-                .buttonStyle(.plain)
+                ))
+                .toggleStyle(CustomToggleStyle())
+                .labelsHidden()
                 .disabled(!permissionManager.status.allGranted && !asrModelLoaded)
             }
 
@@ -336,15 +269,31 @@ struct VoiceSettingsSection: View {
 
             if let currentModel = ASRModel(rawValue: configManager.model) {
                 if currentModel.isApple {
-                    Text("无需下载，使用系统内置语音识别引擎。需在「系统设置 → 键盘 → 听写」中启用中文（简体）。")
-                        .font(.system(size: 12))
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("无需下载，使用系统内置语音识别引擎。")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        HStack(spacing: 6) {
+                            Image(systemName: "globe").font(.system(size: 11))
+                            Text("识别语言").font(.system(size: 12, weight: .medium))
+                        }
                         .foregroundColor(theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Text("首次启动需下载模型（\(currentModel.estimatedSize)）。下载由 HuggingFace 提供，国内网络若卡住可点「重试」继续。")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+
+                        Picker("", selection: $configManager.voiceInputLanguage) {
+                            ForEach(VoiceInputLanguage.allCases) { lang in
+                                Text(lang.displayName).tag(lang)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+
+                        Text("Apple 引擎无法自动检测语言，请先选定语言。需在「系统设置 → 键盘 → 听写」中启用对应语言。")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
         }
@@ -352,7 +301,7 @@ struct VoiceSettingsSection: View {
 
     private var asrStatusDotColor: Color {
         switch voiceService.state {
-        case .ready, .recording, .transcribing: return .green
+        case .ready, .recording, .transcribing: return theme.success
         case .error: return theme.stop
         default: return theme.border
         }
@@ -360,17 +309,9 @@ struct VoiceSettingsSection: View {
 
     private var asrStatusTextColor: Color {
         switch voiceService.state {
-        case .ready, .recording, .transcribing: return .green
+        case .ready, .recording, .transcribing: return theme.success
         case .error: return theme.stop
         default: return theme.textSecondary
-        }
-    }
-
-    private var asrActionLabel: String {
-        switch voiceService.state {
-        case .ready, .recording, .transcribing: return "停止"
-        case .error: return "重试"
-        default: return "启动"
         }
     }
 
@@ -477,40 +418,42 @@ struct VoiceSettingsSection: View {
 
             HStack(spacing: 10) {
                 Circle()
-                    .fill(asrModelLoaded ? Color.green : theme.border)
+                    .fill(asrModelLoaded ? theme.success : theme.border)
                     .frame(width: 8, height: 8)
                 Text(asrStatusText)
                     .font(.system(size: 13))
-                    .foregroundColor(asrModelLoaded ? Color.green : theme.textSecondary)
+                    .foregroundColor(asrModelLoaded ? theme.success : theme.textSecondary)
 
                 Spacer()
 
-                Button(action: {
-                    if asrModelLoaded {
-                        voiceService.stop()
-                    } else {
-                        voiceService.start()
+                Toggle("", isOn: Binding(
+                    get: { asrModelLoaded },
+                    set: { isOn in
+                        if isOn { voiceService.start() } else { voiceService.stop() }
                     }
-                }) {
-                    Text(asrModelLoaded ? "停止" : "启动")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .background(asrModelLoaded ? theme.stop : theme.accent)
-                        .cornerRadius(8)
-                }
-                .buttonStyle(.plain)
+                ))
+                .toggleStyle(CustomToggleStyle())
+                .labelsHidden()
             }
 
-            Text(isVolcano ? "使用火山引擎豆包语音识别，需要网络连接" : "云端 ASR 需要网络连接，识别结果取决于所选服务商")
-                .font(.system(size: 12))
-                .foregroundColor(theme.textSecondary)
         }
     }
 
     // MARK: - LLM Model Card
 
+    /// True when LLM polish is toggled on but no usable API key is configured —
+    /// the card reads "已启用" yet every polish call silently falls back to the
+    /// raw transcription. Drives an inline warning so this isn't silent.
+    private var llmEnabledButUnconfigured: Bool {
+        guard configManager.cloudLLMEnabled else { return false }
+        guard let provider = LLMProvider(rawValue: configManager.llmProvider),
+              provider != .none else { return true }
+        let key = configManager.llmCredentials[provider.rawValue]?.apiKey ?? ""
+        return key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Compact LLM enable card. The provider / API Key / model fields moved
+    /// to the 通用 settings page — this card keeps only the on/off switch.
     private var llmModelCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
@@ -524,107 +467,47 @@ struct VoiceSettingsSection: View {
                 provenanceBadge(isCloud: true)  // LLM polishing is always cloud — local option retired.
             }
 
-            // Local LLM option intentionally removed — text post-processing is
-            // a low-frequency operation, no need for the heavy local model.
-            cloudLLMContent
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(configManager.cloudLLMEnabled ? theme.success : theme.border)
+                    .frame(width: 8, height: 8)
+                Text(configManager.cloudLLMEnabled ? "已启用" : "未启用")
+                    .font(.system(size: 13))
+                    .foregroundColor(configManager.cloudLLMEnabled ? theme.success : theme.textSecondary)
+
+                Spacer()
+
+                Toggle("", isOn: $configManager.cloudLLMEnabled)
+                    .toggleStyle(CustomToggleStyle())
+                    .labelsHidden()
+            }
+
+            Text("启用后，语音转写将通过云端 AI 大模型优化")
+                .font(.system(size: 12))
+                .foregroundColor(theme.textSecondary)
+
+            HStack(spacing: 4) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 10))
+                Text("提供商 / API Key / 模型 在「通用」设置中配置")
+                    .font(.system(size: 11))
+            }
+            .foregroundColor(theme.textTertiary)
+
+            if llmEnabledButUnconfigured {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                    Text("未在「通用」页配置 API Key，润色不会生效")
+                        .font(.system(size: 11))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundColor(theme.stop)
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
-    }
-
-    private var cloudLLMContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            configRow(label: "提供商") {
-                Picker("", selection: $configManager.llmProvider) {
-                    ForEach(LLMProvider.allCases.filter { $0 != .none }) { provider in
-                        Text(provider.displayName).tag(provider.rawValue)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .onChange(of: configManager.llmProvider) { _, newProvider in
-                    if let provider = LLMProvider(rawValue: newProvider), provider != .none {
-                        var creds = configManager.llmCredentials
-                        if creds[newProvider] == nil {
-                            creds[newProvider] = ProviderCredentials(
-                                baseURL: provider.defaultBaseURL,
-                                model: provider.defaultModel
-                            )
-                            configManager.llmCredentials = creds
-                        }
-                    }
-                }
-            }
-
-            if let selectedLLM = LLMProvider(rawValue: configManager.llmProvider), selectedLLM != .none {
-                if selectedLLM.requiresAPIKey {
-                    configRow(label: "API Key") {
-                        SecureField("输入 API Key", text: credentialBinding(
-                            credentials: $configManager.llmCredentials,
-                            provider: selectedLLM.rawValue,
-                            keyPath: \.apiKey
-                        ))
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
-                    }
-                }
-
-                configRow(label: "Base URL") {
-                    TextField("API 地址", text: credentialBinding(
-                        credentials: $configManager.llmCredentials,
-                        provider: selectedLLM.rawValue,
-                        keyPath: \.baseURL
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13))
-                }
-
-                configRow(label: "模型") {
-                    TextField("模型名称", text: credentialBinding(
-                        credentials: $configManager.llmCredentials,
-                        provider: selectedLLM.rawValue,
-                        keyPath: \.model
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13))
-                }
-            }
-
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(configManager.cloudLLMEnabled ? Color.green : theme.border)
-                    .frame(width: 8, height: 8)
-                Text(configManager.cloudLLMEnabled ? "已启用" : "未启用")
-                    .font(.system(size: 13))
-                    .foregroundColor(configManager.cloudLLMEnabled ? Color.green : theme.textSecondary)
-
-                Spacer()
-
-                Button(action: {
-                    configManager.cloudLLMEnabled.toggle()
-                }) {
-                    Text(configManager.cloudLLMEnabled ? "停止" : "启动")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .background(configManager.cloudLLMEnabled ? theme.stop : theme.accent)
-                        .cornerRadius(8)
-                }
-                .buttonStyle(.plain)
-            }
-
-            if let selectedLLM = LLMProvider(rawValue: configManager.llmProvider), selectedLLM.isLocal {
-                Text("使用本地 Ollama 服务，无需 API Key，请确保 Ollama 已启动")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.textSecondary)
-            } else {
-                Text("点击「启动」后，语音转写将通过云端 AI 大模型优化")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.textSecondary)
-            }
-        }
     }
 
     // MARK: - AI Polish Prompt
@@ -740,6 +623,9 @@ struct VoiceSettingsSection: View {
         }
         .padding(20)
         .frame(width: 360)
+        // Sheet runs in its own window — pin the tint so the default "保存"
+        // button and the text-field focus ring stay app-blue, not system accent.
+        .tint(theme.accent)
     }
 
     private func savePolishPreset() {
@@ -860,15 +746,28 @@ struct VoiceSettingsSection: View {
                 newRuleEditorRow
             }
 
-            VStack(spacing: 6) {
-                ForEach(configManager.replacements) { rule in
-                    if editingRuleId == rule.id {
-                        editingRuleRow(rule)
-                    } else {
-                        ruleRow(rule)
+            // Fixed-height scroll box so a long rule list doesn't stretch the
+            // whole page. Newest rules first (storage stays append-ordered;
+            // only the display is reversed).
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(configManager.replacements.reversed()) { rule in
+                        if editingRuleId == rule.id {
+                            editingRuleRow(rule)
+                        } else {
+                            ruleRow(rule)
+                        }
                     }
                 }
+                .padding(8)
             }
+            .frame(height: 300)
+            .background(theme.inputBackground)
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(theme.border, lineWidth: 1)
+            )
         }
     }
 

@@ -266,7 +266,7 @@ enum MeetingRetranscriber {
         let durationStr = hours > 0 ? "\(hours)小时\(minutes)分钟" : "\(minutes)分钟"
 
         var lines: [String] = []
-        lines.append("# 会议纪要（重转写：\(language ?? "Auto")）")
+        lines.append("# 声音录制（重转写：\(language ?? "Auto")）")
         lines.append("")
         lines.append("- 日期：\(dateFmt.string(from: meetingStartDate))")
         lines.append("- 时间：\(timeFmt.string(from: meetingStartDate)) -")

@@ -1,12 +1,25 @@
 import Foundation
 
-/// Generates LLM-powered meeting summaries from transcription files.
+/// Turns a raw meeting transcription into a summary document. The LLM does
+/// three things, all hardcoded — there is no user-editable prompt anymore:
+///   1. clean & restore the raw transcription (fix ASR errors, drop fillers,
+///      keep the original wording, no speaker labels)
+///   2. write a summary of the cleaned text
+///   3. generate a title for the whole recording
 @MainActor
 final class MeetingSummarizer {
 
     private let configManager: ConfigManager
 
-    private static let chunkThreshold = 60_000
+    /// Max input chars per cleaning call. The cleaning step's output is
+    /// roughly the same size as its input, so each chunk must stay small
+    /// enough that the cleaned result still fits in the `llmMaxTokens`
+    /// output budget.
+    private static let cleanChunkSize = 5_000
+    /// Safety cap on the text fed to the title/summary call. Meetings rarely
+    /// produce this much cleaned text; beyond it the tail is dropped to keep
+    /// the request within sane bounds.
+    private static let summaryInputCap = 50_000
     private static let llmTimeout: TimeInterval = 120
     private static let llmMaxTokens = 8192
 
@@ -25,68 +38,151 @@ final class MeetingSummarizer {
             throw SummarizerError.emptyTranscript
         }
 
-        let systemPrompt = buildSystemPrompt()
         let client = try createLLMClient()
 
-        let summary: String
-        if body.count > Self.chunkThreshold {
-            summary = try await summarizeChunked(body: body, systemPrompt: systemPrompt, client: client)
-        } else {
-            summary = try await client.call(systemPrompt: systemPrompt, userMessage: body)
-        }
+        // Step 1 — clean & restore the raw transcription.
+        let cleaned = try await cleanTranscript(body: body, client: client)
 
-        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw SummarizerError.emptyResponse
-        }
+        // Step 2 — generate a title and a summary from the cleaned text.
+        let (title, summary) = try await titleAndSummary(cleanedText: cleaned, client: client)
 
+        // Assemble and write the summary document.
         let transcriptURL = URL(fileURLWithPath: transcriptPath)
-        let baseName = transcriptURL.deletingPathExtension().lastPathComponent
-        let summaryURL = transcriptURL.deletingLastPathComponent().appendingPathComponent(baseName + "_会议摘要.md")
-        let originalFilename = transcriptURL.lastPathComponent
+        let summaryURL = summaryFileURL(transcriptURL: transcriptURL, title: title)
         let now = Self.dateFormatter.string(from: Date())
 
         let content = """
-        # 会议摘要
+        # \(title)
 
-        - 原始记录：\(originalFilename)
+        - 原始记录：\(transcriptURL.lastPathComponent)
         - 生成时间：\(now)
 
         ---
 
-        \(trimmed)
+        ## 摘要
+
+        \(summary)
+
+        ## 全文整理
+
+        \(cleaned)
         """
 
         try content.write(to: summaryURL, atomically: true, encoding: .utf8)
         return summaryURL.path
     }
 
-    // MARK: - Prompt Building
+    // MARK: - Step 1: Clean Transcript
 
-    private func buildSystemPrompt() -> String {
-        let customPrompt = configManager.meetingSummaryPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Cleans the transcription chunk by chunk and concatenates the result.
+    /// A chunk that fails to clean falls back to its raw text so no content
+    /// is lost; only when *every* chunk fails does the whole step error out.
+    private func cleanTranscript(body: String, client: LLMClient) async throws -> String {
+        let chunks = splitIntoChunks(body, maxSize: Self.cleanChunkSize)
+        var cleanedParts: [String] = []
+        var errors: [String] = []
+        var successCount = 0
 
-        if customPrompt.isEmpty {
-            return ""
-        } else {
-            return """
-            你是会议纪要整理助手。请根据以下会议转写文本，按用户要求生成会议摘要。同时修正语音识别中的错别字，根据上下文推断并标注发言者。只输出会议摘要，不要解释。
-
-            用户要求：\(customPrompt)
-            """
+        for (index, chunk) in chunks.enumerated() {
+            let rawChunk = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
+            do {
+                let result = try await client.call(systemPrompt: Self.cleanSystemPrompt, userMessage: chunk)
+                let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    cleanedParts.append(rawChunk)
+                } else {
+                    cleanedParts.append(trimmed)
+                    successCount += 1
+                }
+            } catch {
+                errors.append("第 \(index + 1) 段整理失败: \(error.localizedDescription)")
+                cleanedParts.append(rawChunk)
+            }
         }
+
+        guard successCount > 0 else {
+            throw SummarizerError.allChunksFailed(errors.joined(separator: "; "))
+        }
+
+        var joined = cleanedParts.joined(separator: "\n\n")
+        if !errors.isEmpty {
+            joined += "\n\n> 注意：部分内容整理失败，已保留原始转写 - \(errors.joined(separator: "; "))"
+        }
+        return joined
     }
 
-    /// Re-exported for callers that still reference the old name. The canonical
-    /// source now lives in `PromptPreset.defaultMeetingDialogPrompt` so the
-    /// built-in template picker, the fresh-install default, and any fallback
-    /// path all stay in sync.
-    static let defaultPrompt = PromptPreset.defaultMeetingDialogPrompt
+    // MARK: - Step 2: Title & Summary
+
+    private func titleAndSummary(cleanedText: String, client: LLMClient) async throws -> (title: String, summary: String) {
+        var input = cleanedText
+        if input.count > Self.summaryInputCap {
+            input = String(input.prefix(Self.summaryInputCap)) + "\n\n（后续内容略）"
+        }
+
+        let response = try await client.call(systemPrompt: Self.titleSummarySystemPrompt, userMessage: input)
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw SummarizerError.emptyResponse
+        }
+        return parseTitleAndSummary(trimmed)
+    }
+
+    /// Parses the `标题：…` first line out of the model's response. Falls back
+    /// to a date-based title and treats the whole response as the summary
+    /// when the model doesn't follow the format.
+    private func parseTitleAndSummary(_ raw: String) -> (title: String, summary: String) {
+        let lines = raw.components(separatedBy: "\n")
+        for (index, line) in lines.enumerated() {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            guard !t.isEmpty else { continue }
+            if let titleRange = t.range(of: "标题：") ?? t.range(of: "标题:") {
+                let title = String(t[titleRange.upperBound...])
+                    .trimmingCharacters(in: CharacterSet(charactersIn: " *#《》\"'「」"))
+                let summary = lines[(index + 1)...].joined(separator: "\n")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return (title.isEmpty ? Self.fallbackTitle() : title,
+                        summary.isEmpty ? raw : summary)
+            }
+            // First non-empty line isn't a title — give up parsing.
+            break
+        }
+        return (Self.fallbackTitle(), raw)
+    }
+
+    private static func fallbackTitle() -> String {
+        "录音摘要 " + dateFormatter.string(from: Date())
+    }
+
+    // MARK: - Prompts
+
+    private static let cleanSystemPrompt = """
+    你是录音转写整理助手。下面是一段由语音识别得到的文本，可能有错别字、识别错误、口语和缺失的标点。请整理这段文本：
+    - 修正明显的错别字和语音识别错误
+    - 补全标点，按语义合理分段
+    - 去除「嗯」「啊」「那个」「就是说」之类的无意义语气词和口头禅
+    - 尽量保留原话，不要概括、不要改写语义、不要补充原文没有的内容
+    - 不要区分或标注说话人，输出连续的正文
+
+    只输出整理后的正文，不要任何说明或解释。
+    """
+
+    private static let titleSummarySystemPrompt = """
+    下面是一段录音的整理后文本。请完成两件事：
+    1. 拟一个简洁的标题，能概括主要内容，不超过 20 个字，不要书名号或引号
+    2. 写一段摘要：先用一两句话概述，再用要点列出讨论的主要内容、达成的决议、待办事项（没有的部分可省略）
+
+    严格按以下格式输出，不要其他任何内容：
+    标题：<标题>
+
+    <摘要正文>
+    """
 
     // MARK: - LLM Client
 
     private func createLLMClient() throws -> LLMClient {
-        guard let provider = LLMProvider(rawValue: configManager.meetingLLMProvider),
+        // Meeting shares the voice LLM provider — there is no separate
+        // meeting provider anymore.
+        guard let provider = LLMProvider(rawValue: configManager.llmProvider),
               provider != .none else {
             throw SummarizerError.notConfigured
         }
@@ -99,84 +195,109 @@ final class MeetingSummarizer {
         // would always return an empty `ProviderCredentials()` and cause the
         // summary to fail with `missingAPIKey` even after the user filled in
         // the API key. This was a real, reproducible bug.
-        let creds = configManager.llmCredentials[provider.rawValue] ?? ProviderCredentials()
+        var creds = configManager.llmCredentials[provider.rawValue] ?? ProviderCredentials()
         if provider.requiresAPIKey && creds.apiKey.isEmpty {
             throw SummarizerError.missingAPIKey
         }
+        // Meeting uses its own model; falls back to the voice model when the
+        // user hasn't set a separate meeting model.
+        creds.model = creds.meetingModel.isEmpty ? creds.model : creds.meetingModel
 
         return LLMClient(provider: provider, credentials: creds, userNotes: "",
                          timeout: Self.llmTimeout, maxTokens: Self.llmMaxTokens)
     }
 
-    // MARK: - Chunking
-
-    private func summarizeChunked(body: String, systemPrompt: String, client: LLMClient) async throws -> String {
-        let segments = body.components(separatedBy: "\n\n")
-        var chunks: [String] = []
-        var current = ""
-
-        for segment in segments {
-            if current.count + segment.count + 2 > Self.chunkThreshold && !current.isEmpty {
-                chunks.append(current)
-                current = segment
-            } else {
-                if !current.isEmpty { current += "\n\n" }
-                current += segment
-            }
-        }
-        if !current.isEmpty {
-            chunks.append(current)
-        }
-
-        var chunkSummaries: [String] = []
-        var errors: [String] = []
-
-        for (index, chunk) in chunks.enumerated() {
-            let chunkPrompt = "\(systemPrompt)\n\n注意：这是会议转写的第 \(index + 1)/\(chunks.count) 部分。"
-            do {
-                let result = try await client.call(systemPrompt: chunkPrompt, userMessage: chunk)
-                let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    chunkSummaries.append(trimmed)
-                }
-            } catch {
-                errors.append("第 \(index + 1) 部分失败: \(error.localizedDescription)")
-            }
-        }
-
-        guard !chunkSummaries.isEmpty else {
-            throw SummarizerError.allChunksFailed(errors.joined(separator: "; "))
-        }
-
-        if chunks.count > 1 && chunkSummaries.count > 1 {
-            let mergePrompt = "以下是同一会议分段摘要，请合并为一份完整的结构化会议摘要。保留所有关键信息，去除重复内容。"
-            let merged = try await client.call(
-                systemPrompt: mergePrompt,
-                userMessage: chunkSummaries.joined(separator: "\n\n---\n\n")
-            )
-            let trimmed = merged.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                if !errors.isEmpty {
-                    return trimmed + "\n\n> 注意：部分内容摘要失败 - \(errors.joined(separator: "; "))"
-                }
-                return trimmed
-            }
-        }
-
-        let result = chunkSummaries.joined(separator: "\n\n---\n\n")
-        if !errors.isEmpty {
-            return result + "\n\n> 注意：部分内容摘要失败 - \(errors.joined(separator: "; "))"
-        }
-        return result
-    }
-
     // MARK: - Helpers
+
+    /// Splits text into chunks no larger than `maxSize`, preferring paragraph
+    /// then line boundaries, hard-splitting by character count only as a last
+    /// resort so an unusually long unbroken passage still fits the budget.
+    private func splitIntoChunks(_ text: String, maxSize: Int) -> [String] {
+        func pack(_ pieces: [String], separator: String) -> [String] {
+            var chunks: [String] = []
+            var current = ""
+            for piece in pieces {
+                if current.isEmpty {
+                    current = piece
+                } else if current.count + separator.count + piece.count <= maxSize {
+                    current += separator + piece
+                } else {
+                    chunks.append(current)
+                    current = piece
+                }
+            }
+            if !current.isEmpty { chunks.append(current) }
+            return chunks
+        }
+
+        var result: [String] = []
+        for chunk in pack(text.components(separatedBy: "\n\n"), separator: "\n\n") {
+            if chunk.count <= maxSize {
+                result.append(chunk)
+                continue
+            }
+            // Paragraph too big — repack by line.
+            for sub in pack(chunk.components(separatedBy: "\n"), separator: "\n") {
+                if sub.count <= maxSize {
+                    result.append(sub)
+                    continue
+                }
+                // Still too big — hard-split by character count.
+                var rest = Substring(sub)
+                while !rest.isEmpty {
+                    let end = rest.index(rest.startIndex, offsetBy: maxSize,
+                                         limitedBy: rest.endIndex) ?? rest.endIndex
+                    result.append(String(rest[..<end]))
+                    rest = rest[end...]
+                }
+            }
+        }
+        return result.isEmpty ? [text] : result
+    }
 
     private func extractBody(from transcript: String) -> String {
         if let range = transcript.range(of: "---\n\n") {
             return String(transcript[range.upperBound...])
         }
         return transcript
+    }
+
+    /// Builds the summary file URL: `<标题>_<时间戳>_摘要.md`, alongside the
+    /// transcript. The `yyyy-MM-dd_HH-mm-ss` timestamp is carried over from
+    /// the transcript filename so History grouping and `--retranscribe`
+    /// (both key off that substring) keep working.
+    private func summaryFileURL(transcriptURL: URL, title: String) -> URL {
+        let dir = transcriptURL.deletingLastPathComponent()
+        let safeTitle = Self.sanitizeForFilename(title)
+        let stem: String
+        if let timestamp = Self.extractTimestamp(from: transcriptURL.lastPathComponent) {
+            stem = "\(safeTitle)_\(timestamp)_摘要"
+        } else {
+            stem = "\(safeTitle)_摘要"
+        }
+        return dir.appendingPathComponent(stem + ".md")
+    }
+
+    private static func extractTimestamp(from filename: String) -> String? {
+        let pattern = "[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(filename.startIndex..<filename.endIndex, in: filename)
+        guard let m = regex.firstMatch(in: filename, range: range),
+              let r = Range(m.range, in: filename) else { return nil }
+        return String(filename[r])
+    }
+
+    /// Strips characters illegal/risky in a filename, collapses whitespace,
+    /// and truncates. Falls back to "录音摘要" when nothing usable remains.
+    private static func sanitizeForFilename(_ raw: String) -> String {
+        let illegal = CharacterSet(charactersIn: "/\\:*?\"<>|")
+            .union(.newlines)
+            .union(.controlCharacters)
+        let cleaned = raw.components(separatedBy: illegal).joined(separator: " ")
+        let collapsed = cleaned.split(separator: " ", omittingEmptySubsequences: true)
+            .joined(separator: " ")
+        if collapsed.isEmpty { return "录音摘要" }
+        return String(collapsed.prefix(30))
     }
 
     private static let dateFormatter: DateFormatter = {
@@ -198,15 +319,15 @@ enum SummarizerError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyTranscript:
-            return "会议记录内容为空，无法生成摘要"
+            return "录音内容为空，无法生成摘要"
         case .emptyResponse:
             return "AI 返回了空的摘要结果"
         case .notConfigured:
-            return "请先配置会议摘要 AI 模型"
+            return "请先配置录音摘要 AI 模型"
         case .missingAPIKey:
             return "请先配置 API Key"
         case .allChunksFailed(let detail):
-            return "所有分段摘要均失败: \(detail)"
+            return "所有分段整理均失败: \(detail)"
         }
     }
 }

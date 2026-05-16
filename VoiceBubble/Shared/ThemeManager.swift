@@ -1,29 +1,47 @@
 import SwiftUI
+import AppKit
 import Combine
 
-// MARK: - Theme Enum (single case, abstraction kept for forward-compat)
+// MARK: - Theme Enum
 
 enum AppTheme: String, CaseIterable, Codable, Identifiable {
-    case codex
+    case system   // Follows NSApp.effectiveAppearance (default)
+    case light
+    case dark
 
     var id: String { rawValue }
 
-    /// Themes shown in the appearance picker. Currently just Codex —
-    /// the picker UI is removed (see AboutTab cleanup), so this is
-    /// retained only for forward-compatibility if a second theme ships.
-    static var selectableCases: [AppTheme] { [.codex] }
+    static var selectableCases: [AppTheme] { [.system, .light, .dark] }
 
-    var displayName: String { "Codex" }
+    var displayName: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light:  return "浅色"
+        case .dark:   return "深色"
+        }
+    }
 
-    var pickerSwatch: Color { Color(hex: "202123") }
+    var pickerSwatch: Color {
+        switch self {
+        case .system: return Color(hex: "FFFFFF")
+        case .light:  return Color(hex: "FFFFFF")
+        case .dark:   return Color(hex: "181818")
+        }
+    }
 
-    var previewColors: [Color] { [Color(hex: "202123"), Color(hex: "10A37F")] }
+    var previewColors: [Color] {
+        switch self {
+        case .system: return [Color(hex: "FFFFFF"), Color(hex: "181818")]
+        case .light:  return [Color(hex: "FFFFFF"), Color(hex: "339CFF")]
+        case .dark:   return [Color(hex: "181818"), Color(hex: "339CFF")]
+        }
+    }
 }
 
-// MARK: - CardDepth (single value, kept for API compatibility)
+// MARK: - CardDepth (legacy; Codex is always flat)
 
 enum CardDepth: Int, CaseIterable, Identifiable {
-    case flat = 0   // Codex is flat by default — no shadows, hairline only.
+    case flat = 0
 
     var id: Int { rawValue }
     var displayName: String { "扁平" }
@@ -34,116 +52,219 @@ enum CardDepth: Int, CaseIterable, Identifiable {
 
 // MARK: - ThemeManager
 
-/// Central design-token source. After the Codex redesign this only emits one
-/// palette, but the abstraction is kept so call sites (`@EnvironmentObject
-/// theme: ThemeManager`) don't have to change and a future second theme can
-/// be added without rewriting every view.
 final class ThemeManager: ObservableObject {
 
-    @Published var current: AppTheme = .codex {
-        didSet { UserDefaults.standard.set(current.rawValue, forKey: "appTheme") }
+    @Published var current: AppTheme {
+        didSet {
+            UserDefaults.standard.set(current.rawValue, forKey: "appTheme")
+            recomputeIsDark()
+        }
     }
 
     @Published var cardDepth: CardDepth = .flat {
         didSet { UserDefaults.standard.set(cardDepth.rawValue, forKey: "cardDepth") }
     }
 
+    /// Effective dark/light, computed from `current` + system appearance.
+    @Published private(set) var isDark: Bool = false
+
+    private var appearanceObserver: NSKeyValueObservation?
+
     init() {
-        // Migrate old users away from removed themes (sakura/mint/etc.) —
-        // any non-codex stored value silently maps to .codex.
+        // Migrate any legacy theme key (e.g. "codex") to .system so existing
+        // users get the new default automatically.
         if let raw = UserDefaults.standard.string(forKey: "appTheme"),
            let theme = AppTheme(rawValue: raw) {
             self.current = theme
         } else {
-            self.current = .codex
+            self.current = .system
         }
-        // cardDepth migrates similarly: only .flat exists now.
         self.cardDepth = .flat
+        recomputeIsDark()
+        observeSystemAppearance()
     }
 
-    /// Always true — Codex is dark-first. Retained for any view that branches
-    /// on isDark (e.g. status bar icon template flag).
-    var isDark: Bool { true }
+    deinit {
+        appearanceObserver?.invalidate()
+    }
 
-    // MARK: - Codex Brand Tokens (spec §5.1)
+    private func observeSystemAppearance() {
+        let app = NSApplication.shared
+        appearanceObserver = app.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.recomputeIsDark() }
+        }
+    }
 
-    // Surfaces
-    var windowBackground:   Color { Color(hex: "0E0F12") }
-    var contentBackground:  Color { Color(hex: "0E0F12") }
-    var surfaceBackground:  Color { Color(hex: "202123") }
-    var sidebarBackground:  Color { Color(hex: "202123") }
-    var inputBackground:    Color { Color(hex: "1A1B1E") }
-    var tagBackground:      Color { Color(hex: "2A2C30") }
+    private func recomputeIsDark() {
+        let newValue: Bool
+        switch current {
+        case .light: newValue = false
+        case .dark:  newValue = true
+        case .system:
+            let appearance = NSApplication.shared.effectiveAppearance
+            newValue = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        }
+        if newValue != isDark {
+            isDark = newValue
+        }
+    }
 
-    // Borders
-    var border:             Color { Color(hex: "40434A") }
-    var borderLight:        Color { Color(hex: "2E3036") }
-    var cardBorderColor:    Color { Color(hex: "40434A") }
+    // MARK: - Base scale
 
-    // Text
-    var textPrimary:        Color { Color(hex: "F5F7FA") }
-    var textSecondary:      Color { Color(hex: "C5C7CD") }
-    var textTertiary:       Color { Color(hex: "9EA1AA") }
-    var textPlaceholder:    Color { Color(hex: "6B6E76") }
+    private func gray0()    -> Color { Color(hex: "FFFFFF") }
+    private func gray50()   -> Color { Color(hex: "F9F9F9") }
+    private func gray100()  -> Color { Color(hex: "EDEDED") }
+    private func gray300()  -> Color { Color(hex: "AFAFAF") }
+    private func gray500()  -> Color { Color(hex: "5D5D5D") }
+    private func gray700()  -> Color { Color(hex: "303030") }
+    private func gray750()  -> Color { Color(hex: "282828") }
+    private func gray800()  -> Color { Color(hex: "212121") }
+    private func gray900()  -> Color { Color(hex: "181818") }
+    private func gray1000() -> Color { Color(hex: "0D0D0D") }
 
-    // Accents
-    var accent:             Color { Color(hex: "10A37F") }
-    var accentSecondary:    Color { Color(hex: "2B8FFF") }
+    private func blue50()   -> Color { Color(hex: "E5F3FF") }
+    private func blue100()  -> Color { Color(hex: "99CEFF") }
+    private func blue300()  -> Color { Color(hex: "339CFF") }
+    private func blue900()  -> Color { Color(hex: "00284D") }
 
-    // Sidebar selection
-    var sidebarSelectedBg:  Color { accent.opacity(0.15) }
-    var sidebarText:        Color { Color(hex: "C5C7CD") }
+    // MARK: - Surfaces
 
-    // Semantic
-    var warning:                Color { Color(hex: "F5A623") }
-    var warningBackground:      Color { warning.opacity(0.12) }
-    var warningBorder:          Color { warning.opacity(0.30) }
-    var destructive:            Color { Color(hex: "EF4444") }
-    var destructiveBackground:  Color { destructive.opacity(0.12) }
-    var stop:                   Color { destructive }
-    var learningOrange:         Color { warning }
-    var learningBackground:     Color { warning.opacity(0.10) }
-    var learningBorder:         Color { warning.opacity(0.25) }
-    var successBackground:      Color { accent.opacity(0.12) }
+    var windowBackground: Color   { isDark ? gray900() : gray0() }
+    var contentBackground: Color  { isDark ? gray900() : gray0() }
+    var surfaceBackground: Color  { isDark ? gray750() : gray0() }   // cards
+    var sidebarBackground: Color  { isDark ? Color(hex: "121212") : gray50() }
+    var inputBackground: Color    { isDark ? gray800() : gray0() }
+    var tagBackground: Color      { isDark ? Color(white: 1, opacity: 0.06) : Color(white: 0, opacity: 0.05) }
+
+    // MARK: - Borders
+
+    /// Default hairline — 8% of the foreground color.
+    var border: Color       { foreground(opacity: 0.08) }
+    var borderLight: Color  { foreground(opacity: 0.04) }
+    var borderHeavy: Color  { foreground(opacity: isDark ? 0.16 : 0.12) }
+    var cardBorderColor: Color { border }
+
+    // MARK: - Text
+
+    var textPrimary: Color   { isDark ? Color.white : Color(hex: "1A1C1F") }
+    var textSecondary: Color { textPrimary.opacity(0.70) }
+    var textTertiary: Color  { textPrimary.opacity(0.50) }
+    var textPlaceholder: Color { gray300() }
+
+    // MARK: - Accent
+
+    /// Codex brand blue. Used for focus, selection state, icon-accent, links.
+    /// NOT used as primary-button fill — that's `textPrimary`.
+    var accent: Color          { blue300() }
+    var accentSecondary: Color { blue300() }
+
+    // MARK: - Sidebar selection
+
+    var sidebarSelectedBg: Color { isDark ? blue900() : blue50() }
+    var sidebarText: Color { textSecondary }
+
+    // MARK: - Semantic
+
+    // Palette is restricted to blue / black / white / gray. Status is conveyed
+    // by icon + copy, not hue — so warning & destructive both resolve to the
+    // foreground color, and success reuses the brand blue.
+    var warning: Color            { textPrimary }
+    var warningBackground: Color  { warning.opacity(0.10) }
+    var warningBorder: Color      { warning.opacity(0.25) }
+
+    var destructive: Color           { textPrimary }
+    var destructiveBackground: Color { destructive.opacity(0.10) }
+    var stop: Color                  { destructive }
+
+    var success: Color           { accent }
+    var successBackground: Color { success.opacity(0.10) }
+
+    var learningOrange: Color     { warning }
+    var learningBackground: Color { warning.opacity(0.10) }
+    var learningBorder: Color     { warning.opacity(0.25) }
 
     // Provenance badges — Codex pattern: distinguish via icon, not colour.
-    var cloudBadge:         Color { textTertiary }
-    var localBadge:         Color { textTertiary }
+    var cloudBadge: Color { textTertiary }
+    var localBadge: Color { textTertiary }
 
-    // Card surface for `glassCard()` modifier
-    var cardOverlayColor:   Color { surfaceBackground }
-    var cardFillOpacity:    Double { 1.0 }
-    var cardMaterial:       Material { .regularMaterial }   // unused by simplified modifier; kept for API compat
-    var cardBaseCornerRadius: CGFloat { 8 }
-    var cardBorderWidth:    CGFloat { 1.0 }
-    var cardShadowRadius:   CGFloat { 0 }
-    var cardShadowOpacity:  Double { 0 }
+    // MARK: - Card surface (for glassCard())
 
-    // Toggle
-    var toggleInactive:     Color { border }
+    var cardOverlayColor: Color   { surfaceBackground }
+    var cardFillOpacity: Double   { 1.0 }
+    var cardMaterial: Material    { .regularMaterial }  // unused; kept for API compat
+    var cardBaseCornerRadius: CGFloat { radiusLg }
+    var cardBorderWidth: CGFloat  { 1.0 }
+    var cardShadowRadius: CGFloat { 0 }
+    var cardShadowOpacity: Double { 0 }
 
-    // Waveform (recording overlay)
-    var waveformColor:      Color { accent }
-    var waveformColorLow:   Color { accent.opacity(0.35) }
-    var waveformColorHigh:  Color { accent }
+    // MARK: - Toggle
+
+    /// Off-state track — muted gray that reads in both light & dark.
+    var toggleInactive: Color { textPrimary.opacity(0.20) }
+    /// On-state track — Codex uses the primary-button fill (always near-black
+    /// in both light & dark; in dark mode it's `gray-1000` which is darker
+    /// than the window background, giving the toggle visible weight).
+    var toggleActive: Color   { isDark ? gray1000() : textPrimary }
+
+    // MARK: - Waveform (recording overlay)
+
+    var waveformColor: Color     { accent }
+    var waveformColorLow: Color  { accent.opacity(0.35) }
+    var waveformColorHigh: Color { accent }
 
     // MARK: - Typography
 
-    /// Always system default (SF Pro on macOS / PingFang SC for Chinese).
-    var fontDesign:      Font.Design { .default }
+    /// All UI chrome uses the system sans (SF Pro / PingFang SC).
+    var fontDesign: Font.Design { .default }
 
-    /// Codex uses mono for digits/timers — keep this hook so existing call
-    /// sites that read `theme.digitFontDesign` still get the right answer.
-    var digitFontDesign: Font.Design { .monospaced }
+    /// Digits no longer require a separate mono font. Call sites should use
+    /// `.monospacedDigit()` modifier instead of `Font.Design.monospaced`.
+    /// Kept as `.default` so any remaining reads don't switch the typeface.
+    var digitFontDesign: Font.Design { .default }
 
-    var bodyWeight:      Font.Weight { .regular }
+    var bodyWeight: Font.Weight { .regular }
 
-    // MARK: - Picker swatch (unused now — picker is removed)
+    // MARK: - Radius scale
 
-    var pickerSwatch: Color { surfaceBackground }
+    let radius2xs: CGFloat = 2
+    let radiusXs:  CGFloat = 4
+    let radiusSm:  CGFloat = 6
+    let radiusMd:  CGFloat = 8
+    let radiusLg:  CGFloat = 10
+    let radiusXl:  CGFloat = 12
+    let radius2xl: CGFloat = 16
+    let radius3xl: CGFloat = 20
+
+    // MARK: - Motion
+
+    let durationBasic: Double   = 0.15
+    let durationRelaxed: Double = 0.30
+
+    /// Codex's signature ease-out — cubic-bezier(.19, 1, .22, 1).
+    /// Use for entering states, hover-in, dropdown reveal.
+    var easeEnter: Animation {
+        .timingCurve(0.19, 1.0, 0.22, 1.0, duration: durationBasic)
+    }
+
+    /// Snappier exit curve — cubic-bezier(.65, 0, .4, 1).
+    var easeExitSnappy: Animation {
+        .timingCurve(0.65, 0.0, 0.4, 1.0, duration: durationBasic)
+    }
+
+    // MARK: - Picker swatch (kept for API compatibility)
+
+    var pickerSwatch: Color   { surfaceBackground }
     var previewColors: [Color] { [surfaceBackground, accent] }
 
     enum PickerPreviewStyle { case sharpSquare }
     var pickerPreviewStyle: PickerPreviewStyle { .sharpSquare }
     var pickerDots: [Color] { [accent] }
+
+    // MARK: - Helpers
+
+    /// Foreground color at a given opacity — used for borders and overlays so
+    /// the same token works in light & dark without hardcoding white/black.
+    private func foreground(opacity: Double) -> Color {
+        textPrimary.opacity(opacity)
+    }
 }

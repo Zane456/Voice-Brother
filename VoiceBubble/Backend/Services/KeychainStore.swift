@@ -24,7 +24,13 @@ enum KeychainStore {
         var attrs = base
         attrs[kSecValueData as String] = data
         attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(attrs as CFDictionary, nil)
+        let status = SecItemAdd(attrs as CFDictionary, nil)
+        // A non-success status here means the API key never reached the
+        // Keychain — the user will look "configured" in the UI but the secret
+        // is gone after relaunch. Leave a trail so this is diagnosable.
+        if status != errSecSuccess {
+            DebugLog.write("[KeychainStore] SecItemAdd failed for \(account): OSStatus \(status)")
+        }
     }
 
     static func get(_ account: String) -> String {
@@ -40,6 +46,12 @@ enum KeychainStore {
         guard status == errSecSuccess,
               let data = result as? Data,
               let str = String(data: data, encoding: .utf8) else {
+            // errSecItemNotFound is expected (key simply never set). Anything
+            // else is a real Keychain failure masquerading as "no key", which
+            // would otherwise be impossible to tell apart from "not configured".
+            if status != errSecSuccess && status != errSecItemNotFound {
+                DebugLog.write("[KeychainStore] SecItemCopyMatching failed for \(account): OSStatus \(status)")
+            }
             return ""
         }
         return str

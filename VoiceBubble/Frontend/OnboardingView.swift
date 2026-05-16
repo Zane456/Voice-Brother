@@ -47,10 +47,10 @@ struct OnboardingView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "sparkles")
                         .foregroundColor(theme.accent)
-                    Text("AI 云端润色 / 会议摘要（可选）")
+                    Text("AI 云端润色 / 录音摘要（可选）")
                         .font(.system(size: 13, weight: .semibold))
                 }
-                Text("如需更强的文本润色或会议摘要，可在「语音 → AI 大模型」或「会议 → 摘要」中填入你自己的 API Key（推荐 OpenRouter，一个 key 通用多家模型）。API Key 保存在系统 Keychain，不会随应用分发。")
+                Text("如需更强的文本润色或录音摘要，可在「语音 → AI 大模型」或「声音录制 → 摘要」中填入你自己的 API Key（推荐 OpenRouter，一个 key 通用多家模型）。API Key 保存在系统 Keychain，不会随应用分发。")
                     .font(.system(size: 11))
                     .foregroundColor(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

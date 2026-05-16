@@ -165,9 +165,12 @@ actor HistoryStore {
 
     // MARK: - Pruning
 
-    /// Delete records older than 90 days. Called once on init.
+    /// Delete records older than the user-configured retention window
+    /// (通用 设置 → 历史记录 → 语音记录缓存). Called once on init.
     private func pruneOldRecords() {
-        let cutoff = iso.string(from: Date().addingTimeInterval(-90 * 24 * 3600))
+        let months = max(1, UserDefaults.standard.object(forKey: "historyRetentionMonths") as? Int ?? 2)
+        guard let cutoffDate = Calendar.current.date(byAdding: .month, value: -months, to: Date()) else { return }
+        let cutoff = iso.string(from: cutoffDate)
         let sql = "DELETE FROM transcription_history WHERE created_at < ?;"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }

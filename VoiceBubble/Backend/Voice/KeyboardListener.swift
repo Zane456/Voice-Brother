@@ -16,7 +16,6 @@ final class KeyboardListener {
     private let onCancel: () -> Void
     private let onReposition: () -> Void
     private let onMeetingToggle: () -> Void
-    private let onEnterPress: () -> Void
 
     // MARK: - State
 
@@ -31,16 +30,7 @@ final class KeyboardListener {
     /// Written from MainActor (MeetingService), read from CGEventTap background
     /// thread. Must be accessed via `isMeetingActive` to route through the lock.
     private var _meetingActive = false
-    /// Set by VoiceService after text injection; cleared after Enter is detected.
-    /// Thread-safe: written from MainActor, read from CGEventTap background thread.
-    private var _feedbackPending = false
     private let stateLock = NSLock()
-    private let feedbackLock = NSLock()
-    var feedbackPending: Bool {
-        get { feedbackLock.withLock { _feedbackPending } }
-        set { feedbackLock.withLock { _feedbackPending = newValue } }
-    }
-    private var enterPending = false
 
     // Both-Command hold detection (hold both Cmd keys for 0.5s to toggle meeting)
     private var cmdLPressed = false
@@ -62,8 +52,9 @@ final class KeyboardListener {
         return (triggerKey == 0x36 || triggerKey == 0x37) ? 0.08 : 0.0
     }
 
-    // Event signaling
-    private var releasePending = false
+    // Event signaling. Release is dispatched directly from the CGEventTap
+    // callback (see handleEvent) so it no longer goes through the polling
+    // tick — only cancel and meeting-toggle still need the run-loop hop.
     private var cancelPending = false
     private var meetingTogglePending = false
 
@@ -84,8 +75,7 @@ final class KeyboardListener {
         onRelease: @escaping () -> Void,
         onCancel: @escaping () -> Void,
         onReposition: @escaping () -> Void,
-        onMeetingToggle: @escaping () -> Void,
-        onEnterPress: @escaping () -> Void = {}
+        onMeetingToggle: @escaping () -> Void
     ) {
         self.triggerKey = triggerKey
         self.flagMask = flagMask
@@ -95,7 +85,6 @@ final class KeyboardListener {
         self.onCancel = onCancel
         self.onReposition = onReposition
         self.onMeetingToggle = onMeetingToggle
-        self.onEnterPress = onEnterPress
     }
 
     // MARK: - Public API
@@ -103,7 +92,6 @@ final class KeyboardListener {
     func start() {
         stopped = false
         pressed = false
-        releasePending = false
         cancelPending = false
         meetingTogglePending = false
         cmdLPressed = false
@@ -135,10 +123,8 @@ final class KeyboardListener {
         cmdRPressed = false
         bothCmdStartTime = 0
         meetingTriggeredWhileHeld = false
-        releasePending = false
         cancelPending = false
         meetingTogglePending = false
-        enterPending = false
         if let runLoop = runLoop {
             CFRunLoopStop(runLoop)
         }
@@ -181,7 +167,12 @@ final class KeyboardListener {
             callback: Self.keyboardCallback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
-            print("[KeyboardListener] Failed to create event tap. Accessibility permission required.")
+            // Tap creation fails when Accessibility permission is missing or
+            // was revoked. The listener thread exits here — the hotkey looks
+            // configured in Settings but silently does nothing. Permission
+            // Manager surfaces the missing permission separately; this log
+            // makes the tap-side failure itself diagnosable.
+            DebugLog.write("[KeyboardListener] Failed to create event tap — Accessibility permission missing or revoked")
             return
         }
 
@@ -234,25 +225,9 @@ final class KeyboardListener {
                 }
             }
 
-            if releasePending {
-                releasePending = false
-                let callback = onRelease
-                DispatchQueue.global(qos: .userInitiated).async {
-                    callback()
-                }
-            }
-
             if meetingTogglePending {
                 meetingTogglePending = false
                 let callback = onMeetingToggle
-                DispatchQueue.global(qos: .userInitiated).async {
-                    callback()
-                }
-            }
-
-            if enterPending {
-                enterPending = false
-                let callback = onEnterPress
                 DispatchQueue.global(qos: .userInitiated).async {
                     callback()
                 }
@@ -326,7 +301,13 @@ final class KeyboardListener {
             } else {  // .otherMouseUp
                 if pressed {
                     pressed = false
-                    releasePending = true
+                    // Direct dispatch (mirrors the press path above) — bypasses
+                    // the 50 ms run-loop tick so the overlay hides the instant
+                    // the user releases the button.
+                    let callback = onRelease
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        callback()
+                    }
                 }
             }
             return nil  // swallow so back/forward navigation doesn't fire
@@ -343,15 +324,6 @@ final class KeyboardListener {
                 return nil // swallow ESC
             }
             return Unmanaged.passRetained(event)
-        }
-
-        // Enter key detection for self-learning feedback
-        if eventType == .keyDown && (keycode == 0x24 || keycode == 0x4C) { // Return or numpad Enter
-            if feedbackPending {
-                feedbackPending = false
-                enterPending = true
-            }
-            return Unmanaged.passRetained(event) // never swallow Enter
         }
 
         // Space key handling during recording
@@ -415,7 +387,12 @@ final class KeyboardListener {
                     pressPendingTime = 0
                 } else if pressed {
                     pressed = false
-                    releasePending = true
+                    // Direct dispatch — bypass the 50 ms run-loop tick so the
+                    // overlay hides the instant the modifier is released.
+                    let callback = onRelease
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        callback()
+                    }
                 }
             }
             return Unmanaged.passRetained(event)
@@ -441,7 +418,11 @@ final class KeyboardListener {
                 pressPendingTime = 0
                 if pressed {
                     pressed = false
-                    releasePending = true
+                    // Direct dispatch — see other release sites.
+                    let callback = onRelease
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        callback()
+                    }
                 }
             } else {
                 bothCmdStartTime = 0
@@ -472,9 +453,15 @@ final class KeyboardListener {
                         // Key released before delay elapsed — discard (too short to be useful)
                         pressPendingTime = 0
                     } else if pressed {
-                        // Normal release — stop recording and transcribe
+                        // Normal release — stop recording and transcribe.
+                        // Direct dispatch from the CGEventTap callback bypasses
+                        // the 50 ms run-loop polling tick, so the overlay starts
+                        // hiding the instant the user lifts the key.
                         pressed = false
-                        releasePending = true
+                        let callback = onRelease
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            callback()
+                        }
                     }
                 }
             }

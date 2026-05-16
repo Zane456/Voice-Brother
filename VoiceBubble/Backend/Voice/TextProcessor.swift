@@ -8,7 +8,7 @@ import Foundation
 ///
 /// Layer 1 (FillerRemover): Context-aware filler word removal
 /// Layer 2 (ITNProcessor): Inverse Text Normalization (numbers, dates, math, etc.)
-/// Layer 3: LLM polish — implemented by LLMClient (remote) and LocalLLMClient (on-device)
+/// Layer 3: LLM polish — implemented by LLMClient (cloud)
 enum TextProcessor {
 
     // MARK: - Public API
@@ -120,7 +120,7 @@ enum TextProcessor {
 
 // MARK: - Layer 3 Protocol
 
-/// LLM-based text polisher. Implemented by LLMClient (remote) and LocalLLMClient (on-device).
+/// LLM-based text polisher. Implemented by LLMClient (cloud).
 protocol TextPolisher {
     func polish(_ text: String) async throws -> String
     func shouldPolish(_ text: String) -> Bool

@@ -9,28 +9,56 @@ import Speech
 /// IMPORTANT: transcribe() blocks the calling thread with a semaphore. Must be called
 /// from a background thread (Task.detached).
 final class AppleASREngine: ASREngineProtocol {
-    private let recognizer: SFSpeechRecognizer
+    /// On-device recognizers keyed by the ASR `language` hint ("Chinese" /
+    /// "English" / "Japanese"). Built once at init and never mutated, so the
+    /// engine stays immutable and lock-free even though transcribe() runs on
+    /// background threads.
+    private let recognizers: [String: SFSpeechRecognizer]
+    /// Used when `language` is nil (auto-detect) or maps to a locale whose
+    /// on-device asset isn't installed. SFSpeechRecognizer cannot auto-detect
+    /// across languages, so auto-detect meetings fall back to Chinese.
+    private let defaultRecognizer: SFSpeechRecognizer
 
-    /// Failable init. Returns nil for any reason the engine couldn't realistically
-    /// run a Chinese on-device transcription right now.
+    /// Maps MeetingLanguage's `asrLanguageHint` values to BCP-47 locale IDs.
+    private static let localeForLanguage: [String: String] = [
+        "Chinese": "zh-Hans",
+        "English": "en-US",
+        "Japanese": "ja-JP",
+    ]
+
+    /// Failable init. Returns nil if the device can't run on-device Chinese
+    /// recognition at all. Japanese/English recognizers are best-effort — if
+    /// their on-device assets aren't installed they're simply omitted, and
+    /// transcribe() then falls back to Chinese for that language.
     init?() {
-        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-Hans")) else {
-            NSLog("[AppleASREngine] Failed to create SFSpeechRecognizer for zh-Hans")
+        var built: [String: SFSpeechRecognizer] = [:]
+        for (hint, localeID) in Self.localeForLanguage {
+            guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeID)) else {
+                NSLog("[AppleASREngine] Failed to create SFSpeechRecognizer for %@ (%@)", hint, localeID)
+                continue
+            }
+            guard recognizer.supportsOnDeviceRecognition else {
+                NSLog("[AppleASREngine] On-device recognition not supported for %@ (%@)", hint, localeID)
+                continue
+            }
+            // `isAvailable` flips to false when the on-device language asset isn't present
+            // (most common cause: user hasn't added that language in System Settings →
+            // Keyboard → Dictation). We log a warning rather than skipping it — the asset
+            // might still download in the background — but the warning gives us a
+            // footprint when transcribe() returns empty repeatedly.
+            if !recognizer.isAvailable {
+                NSLog("[AppleASREngine] WARNING: %@ recognizer reports !isAvailable. The %@ on-device asset may not be installed. Open System Settings → 键盘 → 听写 to add it.", hint, localeID)
+            }
+            built[hint] = recognizer
+        }
+        // Chinese is the required baseline: it's what VoiceService pre-checks and
+        // the auto-detect fallback. Without it the engine can't realistically run.
+        guard let chinese = built["Chinese"] else {
+            NSLog("[AppleASREngine] zh-Hans on-device recognizer unavailable — engine init failed. Open System Settings → 键盘 → 听写 → 添加中文 (简体).")
             return nil
         }
-        guard recognizer.supportsOnDeviceRecognition else {
-            NSLog("[AppleASREngine] On-device recognition not supported on this device")
-            return nil
-        }
-        // `isAvailable` flips to false when the on-device language asset isn't present
-        // (most common cause: user hasn't added Chinese in System Settings → Keyboard →
-        // Dictation). We log a warning rather than failing init — the user might still
-        // get useful results once the asset downloads in the background — but the warning
-        // gives us a footprint when transcribe() returns empty repeatedly.
-        if !recognizer.isAvailable {
-            NSLog("[AppleASREngine] WARNING: recognizer reports !isAvailable. The zh-Hans on-device asset may not be installed. Open System Settings → 键盘 → 听写 → 添加中文 (简体).")
-        }
-        self.recognizer = recognizer
+        self.recognizers = built
+        self.defaultRecognizer = chinese
     }
 
     func transcribe(audio: [Float], sampleRate: Int, language: String?, context: String?) -> String {
@@ -48,17 +76,33 @@ final class AppleASREngine: ASREngineProtocol {
         }
         defer { try? FileManager.default.removeItem(at: tempFileURL) }
 
+        // Pick the recognizer for the requested language. nil (auto-detect) or
+        // an unmapped/uninstalled language falls back to Chinese — SFSpeechRecognizer
+        // can't auto-detect, so a specific 会议语言 must be chosen for ja/en.
+        let recognizer = recognizers[language ?? ""] ?? defaultRecognizer
+
         // If the recognizer flips to unavailable mid-session (asset still downloading,
         // device went to sleep, etc.) bail out with a logged reason instead of letting
         // the request hang for the full 30s timeout.
         guard recognizer.isAvailable else {
-            NSLog("[AppleASREngine] Recognizer not available — skipping transcribe. Likely cause: zh-Hans on-device language asset missing.")
+            NSLog("[AppleASREngine] Recognizer not available — skipping transcribe. Likely cause: on-device language asset missing for the selected 会议语言.")
             return ""
         }
 
         let request = SFSpeechURLRecognitionRequest(url: tempFileURL)
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = false
+        // Punctuation is inserted by the recognizer during recognition itself —
+        // no extra pass, no added latency.
+        request.addsPunctuation = true
+        // Tell the recognizer this is free-form dictation (not a search query),
+        // tuning it for continuous, sentence-length speech.
+        request.taskHint = .dictation
+        // Bias recognition toward the user's hotwords / proper nouns.
+        if let context {
+            let phrases = Self.contextualPhrases(from: context)
+            if !phrases.isEmpty { request.contextualStrings = phrases }
+        }
 
         // Run recognition with semaphore (blocking — must be called from background thread)
         let semaphore = DispatchSemaphore(value: 0)
@@ -87,12 +131,37 @@ final class AppleASREngine: ASREngineProtocol {
             return ""
         }
 
-        // Note: `context` (hotwords) is intentionally unused — SFSpeechRecognizer has no
-        // public API for biasing toward custom vocabulary. Users relying on hotwords
-        // should switch to a Qwen3-ASR model.
-        _ = context
-        _ = language
-        return resultText
+        return Self.ensureTerminalPunctuation(resultText, language: language)
+    }
+
+    /// Apple's recognizer punctuates *within* an utterance but routinely omits
+    /// the final sentence-ending mark. Append one when the text doesn't already
+    /// end with punctuation — a full-width 。 for CJK, a period for English.
+    private static func ensureTerminalPunctuation(_ text: String, language: String?) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = trimmed.last else { return trimmed }
+        let terminators: Set<Character> = [
+            "。", "！", "？", "…", ".", "!", "?",
+            "，", ",", "、", "；", ";", "：", ":",
+        ]
+        guard !terminators.contains(last) else { return trimmed }
+        return trimmed + (language == "English" ? "." : "。")
+    }
+
+    /// Extracts discrete hotword phrases from the descriptive context string
+    /// that `VoiceService.buildHotwordContext` produces (format:
+    /// "…可能出现以下专有名词：词A、词B、词C。"). `SFSpeechRecognizer.contextualStrings`
+    /// expects individual vocabulary items rather than a sentence, so we pull
+    /// the list back out. Best-effort — a parse miss only weakens biasing, it
+    /// never breaks recognition.
+    private static func contextualPhrases(from context: String) -> [String] {
+        guard let marker = context.range(of: "专有名词：") else { return [] }
+        let listSegment = context[marker.upperBound...]
+            .split(separator: "。", maxSplits: 1).first.map(String.init) ?? ""
+        return listSegment
+            .split(separator: "、")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     func unload() {

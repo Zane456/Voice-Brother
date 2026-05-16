@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 // MARK: - Streaming Text State
 
@@ -57,35 +58,11 @@ struct RecordingOverlayContentView: View {
     @ObservedObject var streamingState: StreamingTextState
     @EnvironmentObject private var theme: ThemeManager
 
-    @State private var dotOpacity: Double = 1.0
-
     var body: some View {
+        // Just the waveform — fill+center so the bubble's blue waveform lands
+        // dead-center in the (screen-centered) panel. The trailing text only
+        // appears for brief error messages, never for a live transcript.
         HStack(alignment: .center, spacing: 0) {
-            // REC indicator: red dot + mono REC label. Meeting mode also shows
-            // an inline timer. Spec §6.8.
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(theme.destructive)
-                    .frame(width: 6, height: 6)
-                    .opacity(dotOpacity)
-                    .onAppear {
-                        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
-                            dotOpacity = 0.35
-                        }
-                    }
-                Text("REC")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(theme.destructive)
-
-                if streamingState.mode == .meeting && streamingState.meetingElapsed > 0 {
-                    Text(formatElapsed(streamingState.meetingElapsed))
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.textSecondary)
-                }
-            }
-            .padding(.leading, 10)
-            .padding(.trailing, 6)
-
             RecordingWaveformView(streamingState: streamingState)
                 .frame(width: 36, height: 36)
 
@@ -102,13 +79,8 @@ struct RecordingOverlayContentView: View {
                     .padding(.leading, 4)
             }
         }
-        .frame(minHeight: 36, alignment: .center)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .background(theme.surfaceBackground)
-    }
-
-    private func formatElapsed(_ s: Int) -> String {
-        let h = s / 3600, m = (s % 3600) / 60, sec = s % 60
-        return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%02d:%02d", m, sec)
     }
 }
 
@@ -135,6 +107,8 @@ final class RecordingOverlayPanel: NSPanel {
     let streamingState = StreamingTextState()
 
     private var hostingView: NSHostingView<AnyView>?
+    private weak var themeRef: ThemeManager?
+    private var themeCancellable: AnyCancellable?
 
     /// Bumped on every `show()`. `hide()`'s completion handler bails out if the
     /// token has changed in the meantime — i.e. a new `show()` superseded this
@@ -144,6 +118,8 @@ final class RecordingOverlayPanel: NSPanel {
 
     /// Must be called once after app creates ThemeManager, before showing the panel.
     func configure(themeManager: ThemeManager) {
+        self.themeRef = themeManager
+
         let rootView = AnyView(
             RecordingOverlayContentView(streamingState: streamingState)
                 .environmentObject(themeManager)
@@ -160,6 +136,35 @@ final class RecordingOverlayPanel: NSPanel {
             backdrop.subviews.forEach { $0.removeFromSuperview() }
             backdrop.addSubview(hosting)
         }
+
+        applyThemeColors()
+        // Repaint the AppKit backdrop whenever the theme flips light/dark.
+        // SwiftUI subviews already react via @EnvironmentObject; the CALayer
+        // border/background needs an explicit refresh.
+        themeCancellable = themeManager.$isDark
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.applyThemeColors() }
+    }
+
+    /// Pull current theme colors into the AppKit backdrop layer. The SwiftUI
+    /// view inside paints `theme.surfaceBackground` over the entire content
+    /// area, so the backdrop's only visible job is the 1px hairline border.
+    private func applyThemeColors() {
+        guard let backdrop = contentView else { return }
+        let isDark = themeRef?.isDark ?? false
+        // Border: 8% of foreground in both modes. NSColor matches the
+        // SwiftUI `.opacity(0.08)` on `theme.textPrimary`.
+        let borderNS = isDark
+            ? NSColor.white.withAlphaComponent(0.08)
+            : NSColor.black.withAlphaComponent(0.08)
+        // Backdrop layer color is a fallback only — SwiftUI paints over it.
+        // Match the surface color so any clipping rounding artifact reads as
+        // continuous with the SwiftUI content.
+        let bgNS: NSColor = isDark
+            ? NSColor(red: 0x28/255.0, green: 0x28/255.0, blue: 0x28/255.0, alpha: 1.0)
+            : NSColor.white
+        backdrop.layer?.backgroundColor = bgNS.cgColor
+        backdrop.layer?.borderColor = borderNS.cgColor
     }
 
     // MARK: Init
@@ -194,12 +199,15 @@ final class RecordingOverlayPanel: NSPanel {
         hosting.frame = NSRect(x: 0, y: 0, width: compactSize, height: compactSize)
         self.hostingView = hosting
 
+        // Backdrop colors are set in `applyThemeColors()` after `configure()`
+        // injects the ThemeManager. Defaults here are a placeholder that gets
+        // overwritten before the panel is ever shown.
         let backdrop = NSView()
         backdrop.wantsLayer = true
-        backdrop.layer?.backgroundColor = NSColor(red: 0x20/255.0, green: 0x21/255.0, blue: 0x23/255.0, alpha: 1.0).cgColor
+        backdrop.layer?.backgroundColor = NSColor.white.cgColor
         backdrop.layer?.cornerRadius = cornerRadius
         backdrop.layer?.cornerCurve = .continuous
-        backdrop.layer?.borderColor = NSColor(red: 0x40/255.0, green: 0x43/255.0, blue: 0x4A/255.0, alpha: 1.0).cgColor
+        backdrop.layer?.borderColor = NSColor.black.withAlphaComponent(0.08).cgColor
         backdrop.layer?.borderWidth = 1
         backdrop.layer?.masksToBounds = true
         backdrop.frame = NSRect(x: 0, y: 0, width: compactSize, height: compactSize)
@@ -236,17 +244,11 @@ final class RecordingOverlayPanel: NSPanel {
 
     // MARK: Public API
 
-    func show(streamingEnabled: Bool = false, fontSize: CGFloat = 16, mode: OverlayMode = .voice) {
+    func show(mode: OverlayMode = .voice) {
         showToken &+= 1
 
-        // Calculate max text width for this screen
-        let screenWidth = NSScreen.main?.frame.width ?? 1440
-        let maxTextWidth = screenWidth / 2 - horizontalOverhead
-
-        // Update streaming state
-        streamingState.isEnabled = streamingEnabled
-        streamingState.fontSize = fontSize
-        streamingState.maxTextWidth = maxTextWidth
+        // Recording overlay shows only the waveform — no live transcript.
+        streamingState.isEnabled = false
         streamingState.mode = mode
         streamingState.meetingElapsed = 0
         streamingState.reset()
@@ -353,10 +355,6 @@ final class RecordingOverlayPanel: NSPanel {
         streamingState.meetingElapsed = seconds
     }
 
-    func updateStreamingText(_ text: String) {
-        streamingState.setTarget(text)
-        resizePanelToFitContent()
-    }
 
     // MARK: Dynamic Sizing
 

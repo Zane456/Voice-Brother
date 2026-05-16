@@ -63,6 +63,10 @@ final class AppConfig: ObservableObject {
     @Published var meetingScreenRecording: Bool {
         didSet { scheduleSave() }
     }
+    /// Screen-recording clarity tier. Stored as a `MeetingVideoQuality` rawValue.
+    @Published var meetingVideoQuality: String {
+        didSet { scheduleSave() }
+    }
 
     // MARK: - Model Management
 
@@ -110,9 +114,6 @@ final class AppConfig: ObservableObject {
     @Published var meetingLLMEnabled: Bool {
         didSet { scheduleSave() }
     }
-    @Published var meetingSummaryPrompt: String {
-        didSet { scheduleSave() }
-    }
     /// Language hint sent to the ASR when transcribing meeting audio.
     /// Stored as the raw `MeetingLanguage` value (e.g. "Chinese", "Japanese").
     /// Decouples meetings from the historical hardcoded "Chinese" hint so a
@@ -132,10 +133,6 @@ final class AppConfig: ObservableObject {
 
     /// User-saved 润色 presets, name → prompt body.
     @Published var polishCustomPresets: [String: String] {
-        didSet { scheduleSave() }
-    }
-    /// User-saved 会议摘要 presets, name → prompt body.
-    @Published var meetingCustomPresets: [String: String] {
         didSet { scheduleSave() }
     }
 
@@ -175,6 +172,7 @@ final class AppConfig: ObservableObject {
     static let defaultMigrated = false
     static let defaultLastHistoryKind = "voice"
     static let defaultMeetingScreenRecording = false
+    static let defaultMeetingVideoQuality = MeetingVideoQuality.hd.rawValue
 
     // Model management defaults
     static let defaultASRProviderType = "local"
@@ -196,17 +194,11 @@ final class AppConfig: ObservableObject {
     // Meeting LLM defaults
     static let defaultMeetingLLMCredentials: [String: ProviderCredentials] = [:]
     static let defaultMeetingLLMEnabled = false
-    // Pre-fill with the built-in "对话整理" preset so enabling summary doesn't
-    // start from an empty textarea — user can still edit or swap presets.
-    // Sourced from PromptPreset so the pre-filled textarea and the
-    // "应用模板 → 默认（对话整理）" menu item are guaranteed to match.
-    static let defaultMeetingSummaryPrompt = PromptPreset.defaultMeetingDialogPrompt
     static let defaultMeetingLanguage = MeetingLanguage.auto.rawValue
     static let defaultVoiceInputLanguage = VoiceInputLanguage.chinese.rawValue
 
     // Prompt presets defaults
     static let defaultPolishCustomPresets: [String: String] = [:]
-    static let defaultMeetingCustomPresets: [String: String] = [:]
 
     // MARK: - Persistence
     private static let configURL: URL = {
@@ -232,6 +224,7 @@ final class AppConfig: ObservableObject {
         self.migratedFromVoiceAura = Self.load("migratedFromVoiceAura", default: Self.defaultMigrated)
         self.lastHistoryKind = Self.load("lastHistoryKind", default: Self.defaultLastHistoryKind)
         self.meetingScreenRecording = Self.load("meetingScreenRecording", default: Self.defaultMeetingScreenRecording)
+        self.meetingVideoQuality = Self.load("meetingVideoQuality", default: Self.defaultMeetingVideoQuality)
 
         // Model management
         self.asrProviderType = Self.load("asrProviderType", default: Self.defaultASRProviderType)
@@ -251,13 +244,11 @@ final class AppConfig: ObservableObject {
 
         // Meeting LLM
         self.meetingLLMEnabled = Self.load("meetingLLMEnabled", default: Self.defaultMeetingLLMEnabled)
-        self.meetingSummaryPrompt = Self.load("meetingSummaryPrompt", default: Self.defaultMeetingSummaryPrompt)
         self.meetingLanguage = Self.load("meetingLanguage", default: Self.defaultMeetingLanguage)
         self.voiceInputLanguage = Self.load("voiceInputLanguage", default: Self.defaultVoiceInputLanguage)
 
         // Prompt presets (custom user-defined)
         self.polishCustomPresets = Self.loadDict("polishCustomPresets", default: Self.defaultPolishCustomPresets)
-        self.meetingCustomPresets = Self.loadDict("meetingCustomPresets", default: Self.defaultMeetingCustomPresets)
 
         // Load complex types from JSON
         let (hotwords, replacements, cloudASRCreds, llmCreds, meetingLLMCreds, keychainMigrated) = Self.loadComplexTypes()
@@ -337,6 +328,7 @@ final class AppConfig: ObservableObject {
         defaults.set(migratedFromVoiceAura, forKey: "migratedFromVoiceAura")
         defaults.set(lastHistoryKind, forKey: "lastHistoryKind")
         defaults.set(meetingScreenRecording, forKey: "meetingScreenRecording")
+        defaults.set(meetingVideoQuality, forKey: "meetingVideoQuality")
 
         // Model management
         defaults.set(asrProviderType, forKey: "asrProviderType")
@@ -350,7 +342,6 @@ final class AppConfig: ObservableObject {
 
         // Meeting LLM
         defaults.set(meetingLLMEnabled, forKey: "meetingLLMEnabled")
-        defaults.set(meetingSummaryPrompt, forKey: "meetingSummaryPrompt")
         defaults.set(meetingLanguage, forKey: "meetingLanguage")
 
         // Save complex types as JSON
@@ -376,16 +367,27 @@ final class AppConfig: ObservableObject {
         if let data = try? JSONEncoder().encode(polishCustomPresets) {
             defaults.set(data, forKey: "polishCustomPresets")
         }
-        if let data = try? JSONEncoder().encode(meetingCustomPresets) {
-            defaults.set(data, forKey: "meetingCustomPresets")
-        }
     }
 
     private static func loadDict(_ key: String, default: [String: String]) -> [String: String] {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([String: String].self, from: data)
-        else { return `default` }
-        return decoded
+        decodeOrDefault([String: String].self, key: key,
+                        data: UserDefaults.standard.data(forKey: key), default: `default`)
+    }
+
+    /// Decode JSON-backed UserDefaults data, distinguishing "key never set"
+    /// (silent, expected — falls back to default) from "stored data exists but
+    /// won't decode" (corruption — logged). Without the log, a corrupt blob
+    /// silently resets the user's hotwords / replacement rules / credentials
+    /// to defaults with no trace.
+    private static func decodeOrDefault<T: Decodable>(
+        _ type: T.Type, key: String, data: Data?, default def: T
+    ) -> T {
+        guard let data else { return def }
+        if let decoded = try? JSONDecoder().decode(type, from: data) {
+            return decoded
+        }
+        DebugLog.write("[AppConfig] '\(key)' stored data failed to decode — corrupt, falling back to default")
+        return def
     }
 
     // MARK: - Fresh install detection
@@ -477,53 +479,28 @@ final class AppConfig: ObservableObject {
         let defaults = UserDefaults.standard
 
         // Hotwords
-        let hotwords: [String]
-        if let data = defaults.data(forKey: "hotwords"),
-           let decoded = try? JSONDecoder().decode([String].self, from: data) {
-            hotwords = decoded
-        } else {
-            hotwords = defaultHotwords
-        }
+        let hotwords = decodeOrDefault([String].self, key: "hotwords",
+            data: defaults.data(forKey: "hotwords"), default: defaultHotwords)
 
         // Replacements
-        let replacements: [ReplacementRule]
-        if let data = defaults.data(forKey: "replacements"),
-           let decoded = try? JSONDecoder().decode([ReplacementRule].self, from: data) {
-            replacements = decoded
-        } else {
-            replacements = defaultReplacements
-        }
+        let replacements = decodeOrDefault([ReplacementRule].self, key: "replacements",
+            data: defaults.data(forKey: "replacements"), default: defaultReplacements)
 
         // Cloud ASR Credentials
-        var cloudASRCreds: [String: ProviderCredentials]
-        if let data = defaults.data(forKey: "cloudASRCredentials"),
-           let decoded = try? JSONDecoder().decode([String: ProviderCredentials].self, from: data) {
-            cloudASRCreds = decoded
-        } else {
-            cloudASRCreds = defaultCloudASRCredentials
-        }
+        var cloudASRCreds = decodeOrDefault([String: ProviderCredentials].self, key: "cloudASRCredentials",
+            data: defaults.data(forKey: "cloudASRCredentials"), default: defaultCloudASRCredentials)
         var migrated = hydrateKeysFromKeychain(&cloudASRCreds, bucket: "cloudASR")
 
         // LLM Credentials
-        var llmCreds: [String: ProviderCredentials]
-        if let data = defaults.data(forKey: "llmCredentials"),
-           let decoded = try? JSONDecoder().decode([String: ProviderCredentials].self, from: data) {
-            llmCreds = decoded
-        } else {
-            llmCreds = defaultLLMCredentials
-        }
+        var llmCreds = decodeOrDefault([String: ProviderCredentials].self, key: "llmCredentials",
+            data: defaults.data(forKey: "llmCredentials"), default: defaultLLMCredentials)
         migrated = hydrateKeysFromKeychain(&llmCreds, bucket: "llm") || migrated
 
         // (Meeting Cloud ASR creds removed — meetings share the voice input engine.)
 
         // Meeting LLM Credentials
-        var meetingLLMCreds: [String: ProviderCredentials]
-        if let data = defaults.data(forKey: "meetingLLMCredentials"),
-           let decoded = try? JSONDecoder().decode([String: ProviderCredentials].self, from: data) {
-            meetingLLMCreds = decoded
-        } else {
-            meetingLLMCreds = defaultMeetingLLMCredentials
-        }
+        var meetingLLMCreds = decodeOrDefault([String: ProviderCredentials].self, key: "meetingLLMCredentials",
+            data: defaults.data(forKey: "meetingLLMCredentials"), default: defaultMeetingLLMCredentials)
         migrated = hydrateKeysFromKeychain(&meetingLLMCreds, bucket: "meetingLLM") || migrated
 
         return (hotwords, replacements, cloudASRCreds, llmCreds, meetingLLMCreds, migrated)

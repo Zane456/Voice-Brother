@@ -33,7 +33,7 @@ final class LLMClient: TextPolisher {
     // MARK: - Direct Call (custom system prompt, used by MeetingSummarizer)
 
     func call(systemPrompt: String, userMessage: String) async throws -> String {
-        if provider == .claude {
+        if provider.usesAnthropicProtocol {
             return try await callClaudeAPI(systemPrompt: systemPrompt, userMessage: userMessage)
         } else {
             return try await callOpenAICompatibleAPI(systemPrompt: systemPrompt, userMessage: userMessage)

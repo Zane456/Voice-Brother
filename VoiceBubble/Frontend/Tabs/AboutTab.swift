@@ -30,21 +30,16 @@ struct AboutTab: View {
                 Divider().padding(.horizontal, 16)
                 dataFlowRow(label: "AI 润色（短录入）", state: shortPolishState)
                 Divider().padding(.horizontal, 16)
-                dataFlowRow(label: "语音识别（会议）", state: meetingASRState)
+                dataFlowRow(label: "语音识别（声音录制）", state: meetingASRState)
                 Divider().padding(.horizontal, 16)
-                dataFlowRow(label: "AI 摘要（会议）", state: meetingSummaryState)
+                dataFlowRow(label: "AI 摘要（声音录制）", state: meetingSummaryState)
                 Divider().padding(.horizontal, 16)
                 dataStateRow(label: "转写历史",
-                             enabled: !configManager.privacyMode,
+                             enabled: true,
                              onText: "本地保存中",
-                             offText: "已暂停（隐私模式）")
+                             offText: "已暂停")
             }
             .glassCard()
-
-            Text("此页展示当前所有数据处理位置。本地处理项不会通过网络发送任何信息。")
-                .font(.system(size: 11))
-                .foregroundColor(theme.textTertiary)
-                .padding(.horizontal, 4)
         }
     }
 
@@ -86,7 +81,7 @@ struct AboutTab: View {
 
     private var meetingSummaryState: DataFlowState {
         configManager.meetingLLMEnabled
-            ? .cloud(configManager.meetingLLMProvider)
+            ? .cloud(configManager.llmProvider)
             : .disabled
     }
 
@@ -127,7 +122,7 @@ struct AboutTab: View {
             }
             Spacer()
             Text(badgeText)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(badgeColor)
                 .padding(.horizontal, 8).padding(.vertical, 3)
                 .background(
@@ -168,18 +163,13 @@ struct AboutTab: View {
                 .font(.system(size: 22, weight: .bold))
 
             Text("版本 \(AboutTab.currentVersion)")
-                .font(.system(size: 13, design: .monospaced))
+                .font(.system(size: 13).monospacedDigit())
                 .foregroundColor(theme.textSecondary)
 
             Text("macOS 原生语音输入工具\n按住说话，松开输入")
                 .font(.system(size: 12))
                 .foregroundColor(theme.textTertiary)
                 .multilineTextAlignment(.center)
-
-            Text("UI 风格：OpenAI Codex Mac App")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(theme.textTertiary.opacity(0.7))
-                .padding(.top, 8)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)

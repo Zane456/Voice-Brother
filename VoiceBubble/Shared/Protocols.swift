@@ -6,7 +6,6 @@ import Combine
 protocol VoiceServiceProtocol: ObservableObject {
     var state: ServiceState { get }
     var downloadProgress: DownloadProgress? { get }
-    var removeFillers: Bool { get set }
     var spaceReposition: Bool { get set }
 
     func start()
@@ -37,16 +36,12 @@ protocol ConfigManagerProtocol: ObservableObject {
     var spaceReposition: Bool { get set }
     var meetingSavePath: String { get set }
     var preserveClipboard: Bool { get set }
-    var streamingPreview: Bool { get set }
-    var previewFontSize: Double { get set }
     var onboardingDone: Bool { get set }
 
     // Model management
     var asrProviderType: String { get set }
     var cloudASRProvider: String { get set }
     var cloudASRCredentials: [String: ProviderCredentials] { get set }
-    var llmProviderType: String { get set }
-    var polishModel: String { get set }
     var llmProvider: String { get set }
     var llmCredentials: [String: ProviderCredentials] { get set }
     var localLLMNotes: String { get set }
@@ -55,22 +50,13 @@ protocol ConfigManagerProtocol: ObservableObject {
     // Meeting ASR — shares engine with voice input (configManager.model).
     // No separate meeting ASR config; the meeting LLM (summary) is independent below.
 
-    // Meeting LLM
-    var meetingLLMProvider: String { get set }
+    // Meeting LLM — provider shared with voice (`llmProvider`); the
+    // meeting-specific model lives in `ProviderCredentials.meetingModel`.
     var meetingLLMCredentials: [String: ProviderCredentials] { get set }
     var meetingLLMEnabled: Bool { get set }
-    var meetingSummaryPrompt: String { get set }
-
-    // Self-learning
-    var selfLearningEnabled: Bool { get set }
-    var selfLearningThreshold: Int { get set }
 
     // Prompt presets
     var polishCustomPresets: [String: String] { get set }
-    var meetingCustomPresets: [String: String] { get set }
-
-    // Privacy
-    var privacyMode: Bool { get set }
 
     func save()
     func isFreshInstall() -> Bool

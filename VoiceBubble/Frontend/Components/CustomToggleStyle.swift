@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Codex toggle: green track when on, hairline-grey when off, white knob,
-/// ease-out motion (no spring bounce). Spec §6.5.
+/// Codex toggle: near-black track when on, muted-gray track when off, white
+/// knob, ease-out motion (no spring). On-state matches the primary-button
+/// fill so toggles read as "same family" as primary actions.
 struct CustomToggleStyle: ToggleStyle {
     @EnvironmentObject private var theme: ThemeManager
 
@@ -10,17 +11,19 @@ struct CustomToggleStyle: ToggleStyle {
 
         return ZStack(alignment: isOn ? .trailing : .leading) {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(isOn ? theme.accent : theme.toggleInactive)
+                .fill(isOn ? theme.toggleActive : theme.toggleInactive)
                 .frame(width: 44, height: 24)
 
             Circle()
                 .fill(.white)
                 .frame(width: 18, height: 18)
                 .padding(3)
+                .shadow(color: .black.opacity(theme.isDark ? 0 : 0.15),
+                        radius: 1, x: 0, y: 1)
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withAnimation(theme.easeEnter) {
                 configuration.isOn.toggle()
             }
         }

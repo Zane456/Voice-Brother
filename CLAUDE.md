@@ -93,10 +93,10 @@ MeetingService 直接访问了 VoiceService 的内部属性，**不在 Protocol 
 
 | MeetingService 代码 | 访问的 VoiceService 内部 | 风险 |
 |--------------------|-----------------------|------|
-| `voiceService?.keyboardListenerRef?.isMeetingActive = true` (4处) | `keyboardListenerRef` 属性 + `isMeetingActive` 标志（**已改为锁保护 getter/setter**） | 重命名/重构 KeyboardListener 时会炸 |
-| `voiceService?.asrEngineRef` (2处) | `asrEngineRef` 属性（共享 engine；`handleMeetingToggle` 现在会 await `pendingASRTask` 才把 engine 交给会议） | 改模型管理方式时会炸 |
+| `voiceService?.keyboardListenerRef?.isMeetingActive = true` (多处) | `keyboardListenerRef` 属性 + `isMeetingActive` 标志（**已改为锁保护 getter/setter**） | 重命名/重构 KeyboardListener 时会炸 |
 
-**修改 VoiceService 时必须同时检查 MeetingService 的这 6 处引用。**
+**修改 VoiceService 时必须同时检查 MeetingService 对 `keyboardListenerRef` 的引用。**
+ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Qwen 实例，结束即 `unload()`。
 
 ### 安全修改区域（改了不影响其他模块）
 
@@ -115,7 +115,7 @@ MeetingService 直接访问了 VoiceService 的内部属性，**不在 Protocol 
 ### 修改守则
 
 1. **改共享组件前**：先 grep 所有消费方，确认修改不会破坏它们
-2. **改 VoiceService 内部结构前**：检查 MeetingService 对 `keyboardListenerRef`、`asrModel` 的 6 处直接访问
+2. **改 VoiceService 内部结构前**：检查 MeetingService 对 `keyboardListenerRef` 的直接访问（ASR engine 已不再共享）
 3. **改 RecordingOverlayPanel 的 show/hide 逻辑前**：注意动画 completionHandler 的异步竞态（见已知问题）
 4. **改 Protocol 接口**：前后端必须同步更新，编译验证
 5. **改 Types/枚举**：全局搜索所有 switch/case，确认无遗漏
@@ -161,8 +161,10 @@ MeetingService 直接访问了 VoiceService 的内部属性，**不在 Protocol 
 ### ✅ 已修：P0 RecordingOverlayPanel 动画竞态
 已通过 `showToken` 引用计数解决。hide 的 completionHandler 在 token 变化时 bail out，不会再把新 show 的状态擦掉。
 
-### ✅ 已修：ASR 共享竞态
-VoiceService 新增 `pendingASRTask` 追踪正在进行的转写；`handleMeetingToggle` 在把共享 engine 交给 MeetingService 前会 `await pendingASRTask?.value`。MeetingService.cleanup 也改为 async 并 await 自己的 `pendingTranscriptionTask`。
+### ✅ 已修：ASR 共享竞态（已彻底消除）
+会议不再借用 VoiceService 的 engine——`MeetingService` 按 `configManager.meetingASRModel`
+加载自己的 Qwen 实例（`.preparing` 状态下加载，结束时 `unload()`）。两个服务的 ASR engine
+完全独立，不存在共享竞态。MeetingService.cleanup 仍 await 自己的 `pendingTranscriptionTask`。
 
 ### ✅ 已修：P0 MLX cache 失控（22+ GB RSS）
 **症状**：长时间使用后进程 RSS 涨到 20+ GB，最终触发 swap 颠簸。
@@ -176,7 +178,7 @@ VoiceService 新增 `pendingASRTask` 追踪正在进行的转写；`handleMeetin
 **回归红线**：如果 active 持续上涨（不只是 peak），说明有新的 MLX 数组被作为长期持有的属性挂住了。
 
 ### P1（未修）：MeetingService 穿透访问 VoiceService 内部
-`voiceService?.keyboardListenerRef?.isMeetingActive` 和 `voiceService?.asrEngineRef` 绕过 Protocol 层。**已用锁保护 `isMeetingActive` getter/setter**，但架构层面仍破坏了前后端解耦。后续可在 VoiceServiceProtocol 中添加 `func setMeetingActive(_:)` 和 `func borrowASREngine() -> (any ASREngineProtocol)?`。
+`voiceService?.keyboardListenerRef?.isMeetingActive` 绕过 Protocol 层。**已用锁保护 `isMeetingActive` getter/setter**，但架构层面仍破坏了前后端解耦。后续可在 VoiceServiceProtocol 中添加 `func setMeetingActive(_:)`。（`asrEngineRef` 穿透已随会议独立模型一并移除。）
 
 ### P2（未修）：GeneralTab / VoiceSettingsSection 过大
 目标：每个 Tab 文件控制在 250 行以内。

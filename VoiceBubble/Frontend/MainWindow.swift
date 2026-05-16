@@ -14,7 +14,7 @@ struct MainWindow: View {
     /// settings. About stays last as the reference / help anchor.
     private enum AppTab: String, CaseIterable {
         case voice = "语音"
-        case meeting = "会议"
+        case meeting = "声音录制"
         case history = "历史"
         case general = "通用"
         case about = "关于"
@@ -32,7 +32,7 @@ struct MainWindow: View {
         var accessibilityLabel: String {
             switch self {
             case .voice: return "语音输入设置"
-            case .meeting: return "会议纪要"
+            case .meeting: return "声音录制"
             case .history: return "历史记录"
             case .general: return "通用设置"
             case .about: return "关于"
@@ -49,7 +49,7 @@ struct MainWindow: View {
                     // explicit banner with a one-click restart.
                     if permissionManager.needsRelaunch {
                         relaunchBanner
-                            .padding(.leading, 76)
+                            .padding(.leading, 56)
                             .padding(.top, 8)
                             .padding(.horizontal, 12)
                             .transition(.move(edge: .top).combined(with: .opacity))
@@ -60,7 +60,7 @@ struct MainWindow: View {
                     // page wondering why nothing works.
                     if !permissionManager.status.allGranted {
                         permissionBanner
-                            .padding(.leading, 76)
+                            .padding(.leading, 56)
                             .padding(.top, 8)
                             .padding(.horizontal, 12)
                             .transition(.move(edge: .top).combined(with: .opacity))
@@ -80,15 +80,44 @@ struct MainWindow: View {
                             AboutTab()
                         }
                     }
+                    // Silky page swap: `.id` gives each tab its own identity so
+                    // SwiftUI runs a transition on switch. The incoming page
+                    // fades in while gently settling up 6pt; the outgoing one
+                    // just fades — short (0.22s) so it never feels sluggish.
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .offset(y: 6)),
+                        removal: .opacity
+                    ))
+                    .id(selectedTab)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(.leading, 76)
+                    .padding(.leading, 56)
+                    // The content surface is its own rounded "card" tucked
+                    // next to the sidebar — left edge rounded, right edge
+                    // straight (it inherits rounding from the window's outer
+                    // corner). Without this, the inner sidebar/content seam
+                    // is a hard 90° edge that fights the soft outer corners.
+                    .background(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 16,
+                            bottomLeadingRadius: 16,
+                            bottomTrailingRadius: 0,
+                            topTrailingRadius: 0,
+                            style: .continuous
+                        )
+                        .fill(theme.contentBackground)
+                        .padding(.leading, 56)
+                    )
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(theme.contentBackground)
 
                 sidebar
-                    .frame(width: 76, height: geometry.size.height)
-                    .background(theme.sidebarBackground)
+                    .frame(width: 56, height: geometry.size.height)
+                    // The sidebar uses the macOS `.sidebar` vibrancy material;
+                    // a 20% white wash lightens it without losing the blur.
+                    .background(
+                        VisualEffectView(material: .sidebar, blendingMode: .behindWindow)
+                            .overlay(Color.white.opacity(0.2))
+                    )
                     .overlay(alignment: .trailing) {
                         // Codex sidebar: flat full-height panel + 1pt vertical
                         // hairline divider on the inside edge. No rounded corners,
@@ -102,11 +131,20 @@ struct MainWindow: View {
         }
         .background(theme.windowBackground.ignoresSafeArea())
         .ignoresSafeArea()
+        // Round the window's outer corners more aggressively than the macOS
+        // default — matches System Settings' visual softness. macOS Sequoia
+        // ships ~10pt; bumping to 16pt + continuous curve reads as the
+        // "rounded panel" the design references call out.
+        .modifier(WindowCornerRadius(radius: 16))
         // Each theme picks its own typeface design (serif for paper themes,
         // monospaced for the technical theme, rounded for Material). Setting
         // it at the root lets every Font.system(...) call inherit automatically.
         .fontDesign(theme.fontDesign)
-        .frame(minWidth: 800, minHeight: 600)
+        // Force every native control (segmented picker, menus, fields) onto the
+        // app's blue — without this they inherit the macOS system accent, which
+        // renders purple/pink/etc. on users who changed it.
+        .tint(theme.accent)
+        .frame(minWidth: 560, minHeight: 600)
         .onAppear {
             // Only open onboarding when the user hasn't finished it yet.
             // After the user dismisses once (skip or complete), we switch to
@@ -133,7 +171,10 @@ struct MainWindow: View {
             }
         }
         .sheet(isPresented: $showOnboarding) {
+            // A sheet is hosted in its own window — re-apply the app tint so its
+            // controls don't fall back to the macOS system accent (purple/pink).
             OnboardingView(isPresented: $showOnboarding)
+                .tint(theme.accent)
         }
     }
 
@@ -203,11 +244,11 @@ struct MainWindow: View {
             Spacer()
                 .frame(height: 52) // clear traffic light buttons
 
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .frame(width: 40, height: 40)
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-                .padding(.bottom, 20)
+            // Vector mark (no white tile / no rounded square frame) so the
+            // brand glyph reads in line with the SF Symbol nav items below
+            // instead of looking like a transplanted Dock icon.
+            AppLogoView(size: 26)
+                .padding(.bottom, 24)
 
             VStack(spacing: 8) {
                 ForEach(AppTab.allCases, id: \.self) { tab in
@@ -223,8 +264,10 @@ struct MainWindow: View {
         let isSelected = selectedTab == tab
 
         return Button {
-            // Codex motion language: ease-out, no spring bounce.
-            withAnimation(.easeOut(duration: 0.15)) {
+            // Codex motion language: ease-out, no spring bounce. 0.22s drives
+            // both the sidebar chip and the page-swap transition — long enough
+            // to read as silky, short enough to never feel sluggish.
+            withAnimation(.easeOut(duration: 0.22)) {
                 selectedTab = tab
             }
         } label: {

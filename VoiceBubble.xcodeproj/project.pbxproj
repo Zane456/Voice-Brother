@@ -50,6 +50,7 @@
 		B2FCBB6132034E93FA175416 /* VoiceBubble.entitlements.xml in Resources */ = {isa = PBXBuildFile; fileRef = 036A6AC09AF77C67F28A7F40 /* VoiceBubble.entitlements.xml */; };
 		CDFC20AE8EA9E3D2DB8ACD3B /* VolcanoASREngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C00B1E04BA328401E3E0DDC /* VolcanoASREngine.swift */; };
 		CE6C3CC3DA5A340A6B58EF11 /* SectionHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60686020E65A63811B497B59 /* SectionHeader.swift */; };
+		A1B2C3D4E5F600000000F101 /* BrandGlyphs.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F600000000F102 /* BrandGlyphs.swift */; };
 		D0098AA3733286D351446A8C /* MainWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7442E9E6C97095E0F7C5A948 /* MainWindow.swift */; };
 		D47933BDACBF9371E5DE0482 /* PermissionWarningSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E9BE3AEC870F10CF6B6E202 /* PermissionWarningSection.swift */; };
 		D4BE989032B25239040F7DE6 /* FillerRemover.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60BF2DBB8B0A34F6FFE5BF4 /* FillerRemover.swift */; };
@@ -97,6 +98,7 @@
 		F0C7B1A9000000000000ABCD /* FocusObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusObserver.swift; sourceTree = "<group>"; };
 		56A6496C140BCF8F40ED2078 /* LLMClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMClient.swift; sourceTree = "<group>"; };
 		60686020E65A63811B497B59 /* SectionHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionHeader.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F600000000F102 /* BrandGlyphs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrandGlyphs.swift; sourceTree = "<group>"; };
 		620E1E1E4C5B081D83135582 /* PermissionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionManager.swift; sourceTree = "<group>"; };
 		632E90D07AE538A30E6CCF9A /* VoiceSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSettingsSection.swift; sourceTree = "<group>"; };
 		6643A2263C6C2528CF0CF6D6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -290,6 +292,7 @@
 				C0DE5004000000000000ABC2 /* CodexBadge.swift */,
 				C0DE500A000000000000ABC2 /* LLMConfigCard.swift */,
 				60686020E65A63811B497B59 /* SectionHeader.swift */,
+				A1B2C3D4E5F600000000F102 /* BrandGlyphs.swift */,
 				A1B2C3D4E5F600000000B002 /* StatusBarIcon.swift */,
 				A1B2C3D4E5F600000000C002 /* VisualEffectView.swift */,
 				A1B2C3D4E5F600000000D002 /* AppLogoView.swift */,
@@ -443,6 +446,7 @@
 				3AFFD5528CC4598FC21A392F /* RecordingOverlayPanel.swift in Sources */,
 				4B72C8D0FB20E1697FB0AFEA /* RecordingWaveformView.swift in Sources */,
 				CE6C3CC3DA5A340A6B58EF11 /* SectionHeader.swift in Sources */,
+				A1B2C3D4E5F600000000F101 /* BrandGlyphs.swift in Sources */,
 				A1B2C3D4E5F600000000B001 /* StatusBarIcon.swift in Sources */,
 				A1B2C3D4E5F600000000C001 /* VisualEffectView.swift in Sources */,
 				A1B2C3D4E5F600000000D001 /* AppLogoView.swift in Sources */,

@@ -1,67 +1,164 @@
 import SwiftUI
 
-/// Global settings only. Voice-specific input toggles
-/// (语气词过滤、空格重定位、剪贴板保护、实时预览) live under the 语音 tab now.
+/// Global settings. All 输入行为 toggles (语气词过滤/空格重定位/剪贴板保护)
+/// live here — 语气词过滤 affects 语音输入 + 会议记录; the other two are
+/// voice-recording specifics, gathered here so the user finds them in one place.
 /// Appearance picker removed in Codex redesign (single theme).
 struct GeneralSettingsSection: View {
     @EnvironmentObject private var configManager: ConfigManager
+    @EnvironmentObject private var voiceService: VoiceService
+    @EnvironmentObject private var meetingService: MeetingService
     @EnvironmentObject private var theme: ThemeManager
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            // Privacy Mode (highest-priority setting — for咨询师/律师/敏感场景)
-            VStack(alignment: .leading, spacing: 10) {
-                SectionHeader(title: "隐私模式")
+            // AI 大模型 — shared API config for voice polish + meeting summary.
+            // The on/off switches live on the 语音 / 会议 pages.
+            LLMConfigCard()
 
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: configManager.privacyMode ? "lock.shield.fill" : "lock.shield")
-                        .font(.system(size: 22))
-                        .foregroundColor(configManager.privacyMode ? theme.accent : theme.textTertiary)
-                        .frame(width: 28)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(configManager.privacyMode ? "隐私模式 · 已开启" : "隐私模式 · 关闭")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.textPrimary)
-                        Text("开启后：不保存语音转写历史、不进行智能学习记录、切换云端服务商时强制二次确认。适合处理保密对话、客户访谈、内部会议。")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Spacer()
-
-                    Toggle("", isOn: $configManager.privacyMode)
-                        .toggleStyle(CustomToggleStyle())
-                        .labelsHidden()
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(configManager.privacyMode ? theme.accent.opacity(0.08) : Color.clear)
-                )
-                .glassCard()
-            }
-
-            // Hint card pointing user to the Voice tab for input behavior
+            // 输入行为 — 语气词过滤 affects 语音输入 + 会议记录;
+            // 空格重定位/剪贴板保护 are voice-recording specifics.
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeader(title: "输入行为")
 
-                HStack(spacing: 12) {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.accent)
-                    Text("语气词过滤、空格重定位、剪贴板保护、实时预览等输入相关开关已移至「语音」标签。")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 0) {
+                    toggleRow(title: "语气词过滤",
+                              subtitle: "自动删除「嗯」「啊」「那个」等口头禅 · 语音输入与声音录制同时生效",
+                              isOn: $configManager.removeFillers)
+
+                    Divider().padding(.horizontal, 16)
+
+                    toggleRow(title: "空格重定位",
+                              subtitle: "录音中按空格键在鼠标位置点击，切换输入位置",
+                              isOn: Binding(get: { voiceService.spaceReposition },
+                                            set: { voiceService.spaceReposition = $0 }))
+
+                    Divider().padding(.horizontal, 16)
+
+                    toggleRow(title: "剪贴板保护",
+                              subtitle: "保留之前复制的内容（图片、文件等），关闭则直接覆盖",
+                              isOn: $configManager.preserveClipboard)
+                }
+                .glassCard()
+            }
+
+            // 历史记录缓存 — records / meeting files past the chosen window
+            // are pruned automatically. Voice & meeting have separate periods.
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader(title: "历史记录")
+
+                VStack(spacing: 0) {
+                    retentionRow(title: "语音记录缓存",
+                                 subtitle: "超过该时长的语音转写历史会自动清理",
+                                 selection: $configManager.historyRetentionMonths)
+
+                    Divider().padding(.horizontal, 16)
+
+                    retentionRow(title: "声音录制缓存",
+                                 subtitle: "超过该时长的录音记录与录音文件会自动清理",
+                                 selection: $configManager.meetingRetentionMonths)
+                }
+                .glassCard()
+            }
+
+            // 会议保存路径 — long-term setting, so it lives here. The
+            // 打开文件夹 action sits in the 会议 tab next to recording.
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader(title: "声音录制保存路径")
+
+                HStack(spacing: 8) {
+                    Text(configManager.meetingSavePath)
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
                     Spacer()
+
+                    Button {
+                        chooseSavePath()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "folder").font(.system(size: 12))
+                            Text("选择文件夹").font(.system(size: 12))
+                        }
+                        .foregroundColor(theme.accentSecondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(theme.surfaceBackground)
+                        .cornerRadius(8)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.border, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .glassCard()
             }
         }
+    }
+
+    private func chooseSavePath() {
+        let panel = NSOpenPanel()
+        panel.title = "选择录音保存路径"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+
+        if panel.runModal() == .OK, let url = panel.urls.first {
+            configManager.meetingSavePath = url.path
+            meetingService.savePath = url.path
+        }
+    }
+
+    /// Retention dropdown options, in months. 12 = 一年 (the cap).
+    private static let retentionOptions = [1, 2, 3, 4, 5, 6, 12]
+
+    private static func retentionLabel(_ months: Int) -> String {
+        months >= 12 ? "一年" : "\(months) 个月"
+    }
+
+    private func retentionRow(title: String, subtitle: String, selection: Binding<Int>) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.textPrimary)
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Picker("", selection: selection) {
+                ForEach(Self.retentionOptions, id: \.self) { months in
+                    Text(Self.retentionLabel(months)).tag(months)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+        }
+        .padding(16)
+    }
+
+    private func toggleRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.textPrimary)
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: isOn)
+                .toggleStyle(CustomToggleStyle())
+                .labelsHidden()
+        }
+        .padding(16)
     }
 }

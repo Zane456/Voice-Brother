@@ -43,6 +43,9 @@ enum ServiceState: Equatable {
 
 enum MeetingState: Equatable {
     case idle
+    /// Loading (and, on first use, downloading) the meeting's own Qwen ASR
+    /// model. Recording hasn't started yet — the elapsed timer doesn't run.
+    case preparing
     case recording
     case finishing
     case summarizing
@@ -51,10 +54,52 @@ enum MeetingState: Equatable {
     var displayText: String {
         switch self {
         case .idle: return "空闲"
+        case .preparing: return "加载识别模型..."
         case .recording: return "录制中"
         case .finishing: return "处理剩余音频..."
-        case .summarizing: return "生成会议摘要..."
+        case .summarizing: return "生成录音摘要..."
         case .error(let msg): return "错误: \(msg)"
+        }
+    }
+}
+
+// MARK: - Meeting Video Quality
+
+/// Screen-recording clarity tier. Controls both the captured resolution
+/// (height cap) and the H.264 average bitrate — bitrate is what actually
+/// determines whether screen text looks sharp, so resolution alone is not
+/// enough.
+enum MeetingVideoQuality: String, CaseIterable, Identifiable, Codable {
+    case original = "Original"
+    case hd = "HD"
+    case sd = "SD"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .original: return "原画"
+        case .hd: return "高清"
+        case .sd: return "标清"
+        }
+    }
+
+    /// Height cap in pixels; `nil` means capture at the display's native
+    /// pixel resolution with no downscaling.
+    var maxHeight: Int? {
+        switch self {
+        case .original: return nil
+        case .hd: return 1080
+        case .sd: return 720
+        }
+    }
+
+    /// Average H.264 bitrate (bits per second) for the video track.
+    var bitrate: Int {
+        switch self {
+        case .original: return 20_000_000
+        case .hd: return 10_000_000
+        case .sd: return 5_000_000
         }
     }
 }
@@ -247,36 +292,28 @@ enum MeetingLanguage: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-// MARK: - Polish Model Selection
+// MARK: - Voice Input Language
 
-enum PolishModel: String, CaseIterable, Identifiable {
-    case qwen3Chat = "aufklarer/Qwen3-0.6B-Chat-CoreML"
+/// Language for voice-input transcription on the Apple Speech engine.
+/// Apple's on-device recognizer is locale-bound and cannot auto-detect across
+/// languages, so a concrete language must be chosen. The Qwen engine ignores
+/// this — it is multilingual and auto-detects.
+enum VoiceInputLanguage: String, CaseIterable, Identifiable, Codable {
+    case chinese = "Chinese"
+    case english = "English"
+    case japanese = "Japanese"
 
     var id: String { rawValue }
 
+    /// String passed to `ASREngineProtocol.transcribe`'s `language` parameter.
+    /// Matches the keys `AppleASREngine` maps to BCP-47 locales.
+    var asrLanguageHint: String { rawValue }
+
     var displayName: String {
         switch self {
-        case .qwen3Chat: return "0.6B 极速模式"
-        }
-    }
-
-    var huggingFaceId: String { rawValue }
-
-    var estimatedSize: String {
-        switch self {
-        case .qwen3Chat: return "~318MB"
-        }
-    }
-
-    var fullName: String {
-        switch self {
-        case .qwen3Chat: return "Qwen3-Chat-0.6B"
-        }
-    }
-
-    var quantization: String {
-        switch self {
-        case .qwen3Chat: return "CoreML INT4"
+        case .chinese:  return "中文"
+        case .english:  return "English"
+        case .japanese: return "日本語"
         }
     }
 }
@@ -412,6 +449,7 @@ enum LLMProvider: String, CaseIterable, Identifiable, Codable {
     case deepseek = "deepseek"
     case openRouter = "openrouter"
     case zhipu = "zhipu"
+    case zai = "zai"
     case doubao = "doubao"
     case kimi = "kimi"
     case ollama = "ollama"
@@ -426,6 +464,7 @@ enum LLMProvider: String, CaseIterable, Identifiable, Codable {
         case .deepseek: return "DeepSeek"
         case .openRouter: return "OpenRouter"
         case .zhipu: return "智谱 (GLM)"
+        case .zai: return "Z.AI (GLM 订阅)"
         case .doubao: return "豆包 (字节跳动)"
         case .kimi: return "Kimi (月之暗面)"
         case .ollama: return "Ollama (本地)"
@@ -440,6 +479,9 @@ enum LLMProvider: String, CaseIterable, Identifiable, Codable {
         case .deepseek: return "https://api.deepseek.com/v1"
         case .openRouter: return "https://openrouter.ai/api/v1"
         case .zhipu: return "https://open.bigmodel.cn/api/paas/v4"
+        // Z.AI 订阅只覆盖 Anthropic 兼容端点（/api/anthropic），走
+        // chat-completions 会报 1113 余额错误，所以这里固定 anthropic 路径。
+        case .zai: return "https://api.z.ai/api/anthropic/v1"
         case .doubao: return "https://ark.cn-beijing.volces.com/api/v3"
         case .kimi: return "https://api.moonshot.cn/v1"
         case .ollama: return "http://localhost:11434/v1"
@@ -454,7 +496,11 @@ enum LLMProvider: String, CaseIterable, Identifiable, Codable {
         case .deepseek: return "deepseek-chat"
         case .openRouter: return "google/gemini-2.0-flash-001"
         case .zhipu: return "glm-4-flash"
-        case .doubao: return "doubao-1.5-pro-32k"
+        case .zai: return "glm-5-turbo"
+        // 火山方舟的 model 字段要求连字符 + 日期后缀的官方 Model ID
+        // （`doubao-1.5-pro-32k` 这种带点的写法会被拒）。日期版本会轮换，
+        // 用户可在方舟控制台查最新 ID 或填私有接入点 ID（ep-…）。
+        case .doubao: return "doubao-1-5-pro-32k-250115"
         case .kimi: return "moonshot-v1-8k"
         case .ollama: return "qwen2.5:7b"
         }
@@ -462,6 +508,12 @@ enum LLMProvider: String, CaseIterable, Identifiable, Codable {
 
     var isLocal: Bool { self == .ollama }
     var requiresAPIKey: Bool { !isLocal && self != .none }
+
+    /// Providers whose API speaks Anthropic's Messages protocol (x-api-key
+    /// header, `/messages` path, content-blocks response) instead of the
+    /// OpenAI chat-completions shape. Z.AI's subscription endpoint is
+    /// Anthropic-compatible, same as Claude itself.
+    var usesAnthropicProtocol: Bool { self == .claude || self == .zai }
 }
 
 // MARK: - Provider Credentials
@@ -469,7 +521,24 @@ enum LLMProvider: String, CaseIterable, Identifiable, Codable {
 struct ProviderCredentials: Codable, Equatable {
     var apiKey: String = ""
     var baseURL: String = ""
-    var model: String = ""
+    var model: String = ""          // 语音模型
+    var meetingModel: String = ""   // 会议模型；为空时回退到 model
+}
+
+extension ProviderCredentials {
+    private enum CodingKeys: String, CodingKey {
+        case apiKey, baseURL, model, meetingModel
+    }
+
+    /// Custom decoder so JSON persisted before `meetingModel` existed still
+    /// decodes — synthesized Decodable would throw on the missing key.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? ""
+        meetingModel = try c.decodeIfPresent(String.self, forKey: .meetingModel) ?? ""
+    }
 }
 
 // MARK: - Prompt Preset
@@ -498,40 +567,6 @@ struct PromptPreset: Identifiable, Hashable {
                      isBuiltIn: true),
         PromptPreset(id: "builtin.polish.email", name: "正式邮件",
                      prompt: "改写为正式邮件语气：得体、客气、措辞严谨。补充称呼/结尾若上下文需要。",
-                     isBuiltIn: true),
-    ]
-
-    /// The rich default meeting-summary prompt. Lives here so the
-    /// "默认（对话整理）" built-in preset, the freshly-installed default
-    /// stored in AppConfig, and any place else that wants the canonical
-    /// dialog-format instructions all point to the same string.
-    static let defaultMeetingDialogPrompt = """
-    你是会议纪要整理助手。请根据以下会议转写文本，整理为人物对话格式。
-
-    要求：
-    1. 识别参会者，根据对话内容、称呼和语境推断发言者身份，用 A、B、C 等标注
-    2. 将内容整理为逐句对话格式，例如：A：…… B：…… A：…… B：……
-    3. 修正语音识别中的错别字和不通顺的表达，保持原意
-    4. 不要添加时间戳，不要添加原文没有的内容
-
-    只输出整理后的对话内容，不要解释你的处理过程。
-    """
-
-    static let builtInMeetingPresets: [PromptPreset] = [
-        PromptPreset(id: "builtin.meeting.default", name: "默认（对话整理）",
-                     prompt: defaultMeetingDialogPrompt,
-                     isBuiltIn: true),
-        PromptPreset(id: "builtin.meeting.review", name: "产品评审",
-                     prompt: "按议题分类整理（背景 / 讨论 / 决议 / 待办），明确每个待办项的负责人和截止时间。",
-                     isBuiltIn: true),
-        PromptPreset(id: "builtin.meeting.weekly", name: "周会",
-                     prompt: "按人或按项目整理上周进度、本周计划、阻塞事项。简洁的子弹列表。",
-                     isBuiltIn: true),
-        PromptPreset(id: "builtin.meeting.oneonone", name: "1on1",
-                     prompt: "整理为话题清单：聊到的内容、决定、跟进项。语气保持中性、客观。",
-                     isBuiltIn: true),
-        PromptPreset(id: "builtin.meeting.interview", name: "客户访谈",
-                     prompt: "保留用户原话和情绪关键词。按问题分组：用户提到的痛点 / 期望 / 现有方案 / 引语。",
                      isBuiltIn: true),
     ]
 }

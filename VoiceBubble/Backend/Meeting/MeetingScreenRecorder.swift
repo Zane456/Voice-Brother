@@ -48,10 +48,12 @@ final class MeetingScreenRecorder: NSObject, @unchecked Sendable {
     // MARK: - Lifecycle
 
     /// Build and start the `AVAssetWriter`. `displaySize` is the pixel size of
-    /// the video track (matches the `SCStreamConfiguration` width/height).
-    /// Called before the stream output is registered, so the writer is ready
-    /// by the time the first frame arrives.
-    func start(displaySize: CGSize) {
+    /// the video track (matches the `SCStreamConfiguration` width/height);
+    /// `bitrate` is the H.264 average bitrate — the dominant factor in whether
+    /// screen text looks sharp (resolution alone is not enough). Called before
+    /// the stream output is registered, so the writer is ready by the time the
+    /// first frame arrives.
+    func start(displaySize: CGSize, bitrate: Int) {
         outputQueue.async {
             do {
                 try? FileManager.default.removeItem(at: self.outputURL)
@@ -61,6 +63,11 @@ final class MeetingScreenRecorder: NSObject, @unchecked Sendable {
                     AVVideoCodecKey: AVVideoCodecType.h264,
                     AVVideoWidthKey: Int(displaySize.width),
                     AVVideoHeightKey: Int(displaySize.height),
+                    AVVideoCompressionPropertiesKey: [
+                        AVVideoAverageBitRateKey: bitrate,
+                        AVVideoMaxKeyFrameIntervalKey: 48,
+                        AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+                    ],
                 ]
                 let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
                 videoInput.expectsMediaDataInRealTime = true

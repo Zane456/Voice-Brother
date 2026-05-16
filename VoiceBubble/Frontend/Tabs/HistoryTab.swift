@@ -652,7 +652,7 @@ struct MeetingHistoryView: View {
                 Button { NSWorkspace.shared.open(file.url) } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "eye").font(.system(size: 11))
-                        Text("打开").font(.system(size: 11))
+                        Text("打开文档").font(.system(size: 11))
                     }.foregroundColor(theme.accentSecondary)
                 }.buttonStyle(.plain)
 

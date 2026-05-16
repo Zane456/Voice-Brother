@@ -77,6 +77,12 @@ final class ConfigManager: ObservableObject, ConfigManagerProtocol {
         get { appConfig.meetingScreenRecording }
         set { appConfig.meetingScreenRecording = newValue }
     }
+    /// Screen-recording clarity tier. Stored as a raw string; falls back to
+    /// HD (1080p) on unknown values.
+    var meetingVideoQuality: MeetingVideoQuality {
+        get { MeetingVideoQuality(rawValue: appConfig.meetingVideoQuality) ?? .hd }
+        set { appConfig.meetingVideoQuality = newValue.rawValue }
+    }
 
     // MARK: - Model Management
 
@@ -128,10 +134,6 @@ final class ConfigManager: ObservableObject, ConfigManagerProtocol {
         get { appConfig.meetingLLMEnabled }
         set { appConfig.meetingLLMEnabled = newValue }
     }
-    var meetingSummaryPrompt: String {
-        get { appConfig.meetingSummaryPrompt }
-        set { appConfig.meetingSummaryPrompt = newValue }
-    }
     /// Selected ASR language for meetings. Stored as raw string but exposed as
     /// the typed enum to consumers; falls back to Chinese on unknown values.
     var meetingLanguage: MeetingLanguage {
@@ -163,10 +165,6 @@ final class ConfigManager: ObservableObject, ConfigManagerProtocol {
     var polishCustomPresets: [String: String] {
         get { appConfig.polishCustomPresets }
         set { appConfig.polishCustomPresets = newValue }
-    }
-    var meetingCustomPresets: [String: String] {
-        get { appConfig.meetingCustomPresets }
-        set { appConfig.meetingCustomPresets = newValue }
     }
 
     // MARK: - ConfigManagerProtocol

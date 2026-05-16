@@ -7,7 +7,6 @@ import CoreAudio
 import CoreGraphics
 import Foundation
 import Qwen3ASR
-import Qwen3Chat
 import Speech
 
 /// Main voice input lifecycle service.
@@ -19,7 +18,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
 
     @Published var state: ServiceState = .stopped
     @Published var downloadProgress: DownloadProgress?
-    @Published var removeFillers: Bool
     @Published var spaceReposition: Bool
 
     // MARK: - Dependencies
@@ -33,10 +31,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     // MARK: - Internal State
 
     private(set) var asrEngine: (any ASREngineProtocol)?
-    private(set) var chatModel: Qwen3ChatModel?
-    @Published var chatModelReady = false
-    @Published var chatModelDownloadProgress: DownloadProgress?
-    @Published var chatModelLoading = false
     private var keyboardListener: KeyboardListener?
     private var audioEngine: AVAudioEngine?
 
@@ -66,9 +60,12 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         set { isCapturingTailLock.withLock { _isCapturingTail = newValue } }
     }
 
-    /// Tail-capture window, in milliseconds. Tuned for the typical 200–400 ms
-    /// release-to-silence gap of casual speech.
-    private static let tailCaptureMillis: UInt64 = 400
+    /// Tail-capture window, in milliseconds. Aggressive setting: trades the
+    /// last ~50–100 ms of trailing audio for snappier text appearance. Most
+    /// casual releases happen after the final syllable is articulated, so the
+    /// shortened window rarely clips. Increase to 200–250 if trailing words
+    /// start getting cut.
+    private static let tailCaptureMillis: UInt64 = 150
 
     /// Diagnostic: count of audio tap callbacks received during current recording.
     private var tapFireCount: Int = 0
@@ -137,9 +134,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// Safety timer to auto-stop recording after 120 seconds.
     private var safetyTimer: Timer?
 
-    /// Timer for periodic streaming preview transcription.
-    private var previewTimer: Timer?
-
     /// Fires once ~1.2s into a recording to verify the audio tap actually
     /// received a buffer. If `tapFireCount` is still 0 at that point the
     /// mic is almost certainly held exclusively by another app (WeChat /
@@ -163,22 +157,11 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// the user's in-progress recording survives the transition.
     private var audioConfigChangeObserver: NSObjectProtocol?
 
-    /// Guard flag to prevent concurrent model access between preview and final transcription.
-    private var isPreviewTranscribing = false
-
     /// Tracks in-flight transcription/finalize work so we can await completion
     /// before yielding the shared ASR engine to the meeting service. The engine
     /// is not thread-safe; running voice and meeting transcribe concurrently
     /// on the same model will corrupt results or crash.
     private var pendingASRTask: Task<Void, Never>?
-
-    /// Snapshot of streaming preview setting at recording start (avoids mid-recording toggle issues).
-    private var currentRecordingStreamingPreview = false
-
-    // Self-learning feedback
-    private var pendingFeedback: FeedbackCollector.PendingFeedback?
-    private var feedbackExpiryTimer: Timer?
-    private let correctionStore = CorrectionStore()
 
     /// Number of audio samples to skip at the start of recording — purely to trim
     /// the leading "key press click" noise that bleeds into the audio tap.
@@ -210,10 +193,13 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// SCO link instead of paying the warm-up cost again. For built-in mics this just
     /// reduces engine setup overhead. Set to 0 to disable.
     private var keepAliveAfterRecording: TimeInterval {
-        // Built-in bumped from 1.0s → 3.0s so back-to-back presses (e.g. correcting
-        // a misrecognized phrase) reuse the warm engine instead of paying full
-        // cold-start latency every time.
-        Self.isCurrentInputBluetooth() ? 8.0 : 3.0
+        // Bluetooth bumped from 8s → 300s (5 min) to mirror how Doubao input method
+        // feels: once the SCO link is up, every press for the next 5 minutes is
+        // instant. Trade-off is AirPods music quality stays degraded (mono HFP) and
+        // a slight battery cost while warm. Same approach used by macos-mic-keepwarm
+        // and other push-to-talk tools. Built-in mic keep-alive stays at 3s — built-in
+        // has no SCO cost so a long window has no benefit.
+        Self.isCurrentInputBluetooth() ? 300.0 : 3.0
     }
 
     /// Pre-warm duration. Bluetooth needs longer to bring the SCO link up cleanly.
@@ -229,6 +215,18 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// no recording is active, but the engine is held open so the next press can
     /// start instantly. Buffers received during this window are discarded.
     private var engineWarmKept = false
+
+    /// Polls system-wide focused element to detect when the user is in a text-
+    /// editable context. While true, we proactively bring the audio engine up so
+    /// the Bluetooth SCO link is already warm when the user presses the trigger.
+    /// Mirrors how IME-class apps (e.g. Doubao input method) avoid cold-start lag.
+    private var focusObserver: FocusObserver?
+
+    /// True while the user's keyboard focus is on a text-editable element AND we've
+    /// reflected that into keeping the engine alive. Used so a recording that ends
+    /// while focus is still on an editable field doesn't drop the engine on its
+    /// keep-alive timer — we hold it through the focus instead.
+    private var isFocusWarmEngaged = false
 
     /// Frontmost app name captured at the moment the trigger key was pressed.
     /// Used as lightweight ASR context so the model knows the domain (IDE vs email vs chat).
@@ -285,7 +283,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
 
     init(configManager: ConfigManager) {
         self.configManager = configManager
-        self.removeFillers = configManager.removeFillers
         self.spaceReposition = configManager.spaceReposition
     }
 
@@ -460,10 +457,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         safetyTimer?.invalidate()
         safetyTimer = nil
 
-        // Cancel preview timer
-        previewTimer?.invalidate()
-        previewTimer = nil
-
         // Cancel audio health check timer
         audioHealthCheckTimer?.invalidate()
         audioHealthCheckTimer = nil
@@ -474,15 +467,18 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         keyboardListener?.stop()
         keyboardListener = nil
 
+        // Stop focus observer. Flag is forced false so its disengage path doesn't
+        // schedule a keep-alive timer right before we tear the engine down hard.
+        focusObserver?.stop()
+        focusObserver = nil
+        isFocusWarmEngaged = false
+
         // Stop audio engine — service teardown is a hard stop, no keep-alive
         stopAudioEngineImmediately()
 
         // Unload ASR engine
         asrEngine?.unload()
         asrEngine = nil
-
-        // Unload chat model
-        stopChatModel()
 
         state = .stopped
         downloadProgress = nil
@@ -523,16 +519,81 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                 Task { @MainActor in
                     self?.handleMeetingToggle()
                 }
-            },
-            onEnterPress: { [weak self] in
-                Task { @MainActor in
-                    self?.handleEnterPress()
-                }
             }
         )
 
         listener.start()
         self.keyboardListener = listener
+
+        startFocusObserver()
+    }
+
+    /// Spin up the focus poller. Only useful when the input is Bluetooth — for
+    /// built-in mics the engine can cold-start in <100ms so pre-warming is wasted
+    /// work. We still attach the observer unconditionally so a mid-session switch
+    /// to AirPods immediately benefits; the engage/disengage paths check the
+    /// transport type at the moment of action.
+    private func startFocusObserver() {
+        focusObserver?.stop()
+        let observer = FocusObserver()
+        observer.onEditableFocused = { [weak self] in
+            Task { @MainActor in self?.engageFocusWarmUp() }
+        }
+        observer.onEditableUnfocused = { [weak self] in
+            Task { @MainActor in self?.disengageFocusWarmUp() }
+        }
+        observer.start()
+        self.focusObserver = observer
+    }
+
+    /// Bring the audio engine up because the user is on a text-editable field.
+    /// Idempotent — calling while already engaged just refreshes the keep-alive.
+    /// No-op on built-in mic (no SCO cost to pay) or when the service isn't ready.
+    private func engageFocusWarmUp() {
+        guard Self.isCurrentInputBluetooth() else { return }
+        guard state == .ready else { return }
+
+        // Recording is in progress: the engine is already up under recording's
+        // control. Remember the focus state so the post-recording finalize can
+        // hold the engine instead of letting keep-alive expire on it.
+        if isRecording {
+            isFocusWarmEngaged = true
+            return
+        }
+
+        isFocusWarmEngaged = true
+
+        // Engine already up (post-recording keep-alive, or a prior focus warm).
+        // Just cancel any pending shutdown so we don't drop it under our feet.
+        if let engine = audioEngine, engine.isRunning {
+            engineKeepAliveTimer?.invalidate()
+            engineKeepAliveTimer = nil
+            engineWarmKept = true
+            debugLog("Focus warm-up: holding already-running engine (text field focused)")
+            return
+        }
+
+        do {
+            try startAudioEngine()
+            debugLog("Focus warm-up: cold-started audio engine (text field focused)")
+        } catch {
+            debugLog("Focus warm-up: cold start FAILED: \(error)")
+            isFocusWarmEngaged = false
+        }
+    }
+
+    /// Release the warm-up hold. If a recording is in progress, just clears the
+    /// flag — recording controls the engine. Otherwise, hand the engine over to
+    /// the keep-alive timer so it expires on the same generous schedule recording
+    /// teardown uses (5 min on Bluetooth).
+    private func disengageFocusWarmUp() {
+        guard isFocusWarmEngaged else { return }
+        isFocusWarmEngaged = false
+        guard !isRecording else { return }
+        guard let engine = audioEngine, engine.isRunning else { return }
+        guard engineKeepAliveTimer == nil else { return }
+        debugLog("Focus warm-up: releasing — keep-alive timer will hold engine for \(keepAliveAfterRecording)s")
+        stopAudioEngine()
     }
 
     // MARK: - Key Event Handlers
@@ -548,9 +609,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             return
         }
 
-        // Clear any pending feedback from previous injection
-        clearPendingFeedback()
-
         do {
             isRecording = true
             clearAudioChunks()
@@ -565,28 +623,17 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             // AFTER `startAudioEngine` so the SCO handshake starts as early as
             // possible. Frontmost app at "press" vs "press + 5ms" is identical.
             try startAudioEngine()
-            recordingAppContext = Self.captureFrontmostAppName(privacyMode: configManager.privacyMode)
+            recordingAppContext = Self.captureFrontmostAppName()
             recordingStartTime = Date()
             state = .recording
             debugLog("Recording started successfully, appContext=\(recordingAppContext ?? "nil")")
 
             // Start cloud streaming if using VolcanoASREngine
             if let volcEngine = asrEngine as? VolcanoASREngine {
-                volcEngine.onStreamingUpdate = { [weak self] text in
-                    DispatchQueue.main.async {
-                        RecordingOverlayPanel.shared.updateStreamingText(text)
-                    }
-                }
                 volcEngine.beginStreaming(sampleRate: 16000, language: "Chinese")
             }
 
-            // Snapshot streaming preview setting for this recording session
-            // Cloud streaming provides its own preview via onStreamingUpdate
-            currentRecordingStreamingPreview = isCloudStreaming || configManager.streamingPreview
-            RecordingOverlayPanel.shared.show(
-                streamingEnabled: currentRecordingStreamingPreview,
-                fontSize: CGFloat(configManager.previewFontSize)
-            )
+            RecordingOverlayPanel.shared.show()
             playStartSound()
 
             // Safety timer: auto-stop after 120 seconds
@@ -629,20 +676,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                 }
             }
 
-            // Start streaming preview timer for LOCAL models only (cloud has its own push updates).
-            // Apple ASR is excluded: its `transcribe` writes a WAV to disk and runs a fresh
-            // SFSpeechURLRecognitionRequest each call, so polling every 1.5s collides with the
-            // final transcribe on the same temp file path AND wastes the user's CPU. The
-            // overlay will simply show the waveform without live text for Apple.
-            let supportsPreview = !(asrEngine is AppleASREngine)
-            if !isCloudStreaming && configManager.streamingPreview && supportsPreview {
-                previewTimer?.invalidate()
-                previewTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-                    Task { @MainActor in
-                        self?.runPreviewTranscription()
-                    }
-                }
-            }
         } catch {
             debugLog("FAILED to start audio engine: \(error)")
             print("[VoiceService] Failed to start audio engine: \(error)")
@@ -656,8 +689,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             tapFireCount = 0
             safetyTimer?.invalidate()
             safetyTimer = nil
-            previewTimer?.invalidate()
-            previewTimer = nil
             state = .ready
         }
     }
@@ -671,7 +702,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     private func abortRecordingWithMessage(_ message: String) {
         isRecording = false
         safetyTimer?.invalidate(); safetyTimer = nil
-        previewTimer?.invalidate(); previewTimer = nil
         audioHealthCheckTimer?.invalidate(); audioHealthCheckTimer = nil
         audioRecoveryTimer?.invalidate(); audioRecoveryTimer = nil
         stopAudioEngineImmediately()
@@ -687,18 +717,18 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             return
         }
 
-        // Visual feedback first: as soon as the user lets go, freeze the
-        // waveform and show "识别中…". The mic stays open for a short tail-
-        // capture window so trailing syllables aren't clipped.
-        RecordingOverlayPanel.shared.markFinalizing()
+        // Hide the overlay the instant the user lets go — the bubble's job
+        // is to confirm "I'm listening", not "I'm thinking". ASR + tail
+        // capture run in the background; if transcription fails, the bubble
+        // will flash back via showBriefMessage. The mic stays open for a
+        // short tail-capture window so trailing syllables aren't clipped.
+        RecordingOverlayPanel.shared.hide()
         isCapturingTail = true
 
-        // Stop the timers immediately — no point doing health checks or
-        // streaming previews during the tail.
+        // Stop the timers immediately — no point doing health checks
+        // during the tail.
         safetyTimer?.invalidate()
         safetyTimer = nil
-        previewTimer?.invalidate()
-        previewTimer = nil
         audioHealthCheckTimer?.invalidate()
         audioHealthCheckTimer = nil
         audioRecoveryTimer?.invalidate()
@@ -729,8 +759,18 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         let chunks = swapAudioChunks()
         let engineRunning = audioEngine?.isRunning ?? false
         stopAudioEngine()
+        // If focus is still on a text-editable field, hold the engine open instead
+        // of letting the keep-alive expire. The keep-alive timer is the right
+        // baseline when the user finishes recording and moves on, but here the
+        // FocusObserver tells us they're still in a "ready to dictate" context.
+        if isFocusWarmEngaged {
+            engineKeepAliveTimer?.invalidate()
+            engineKeepAliveTimer = nil
+            engineWarmKept = true
+            debugLog("finalizeRecordingAfterTail: holding engine — text field still focused")
+        }
         let recordDuration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
-        debugLog("finalizeRecordingAfterTail: chunks=\(chunks.count), totalBytes=\(chunks.reduce(0) { $0 + $1.count }), duration=\(String(format: "%.1f", recordDuration))s, tapFired=\(tapFireCount), engineRunning=\(engineRunning), isPreviewTranscribing=\(isPreviewTranscribing)")
+        debugLog("finalizeRecordingAfterTail: chunks=\(chunks.count), totalBytes=\(chunks.reduce(0) { $0 + $1.count }), duration=\(String(format: "%.1f", recordDuration))s, tapFired=\(tapFireCount), engineRunning=\(engineRunning)")
 
         state = .transcribing
 
@@ -742,20 +782,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             }
         } else {
             pendingASRTask = Task { @MainActor in
-                if isPreviewTranscribing {
-                    debugLog("Waiting for preview transcription to finish...")
-                }
-                // Poll at 25ms (vs 5ms) — preview transcription takes hundreds of
-                // ms anyway, and 5ms wastes wakeups. Cap the wait at 3s so a stuck
-                // preview can't permanently block the final transcription.
-                let waitDeadline = Date().addingTimeInterval(3.0)
-                while isPreviewTranscribing && Date() < waitDeadline {
-                    try? await Task.sleep(for: .milliseconds(25))
-                }
-                if isPreviewTranscribing {
-                    debugLog("Preview transcription wait timed out — proceeding anyway")
-                    isPreviewTranscribing = false
-                }
                 await transcribeAndInject(chunks: chunks)
             }
         }
@@ -768,8 +794,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         isRecording = false
         safetyTimer?.invalidate()
         safetyTimer = nil
-        previewTimer?.invalidate()
-        previewTimer = nil
         audioHealthCheckTimer?.invalidate()
         audioHealthCheckTimer = nil
         audioRecoveryTimer?.invalidate()
@@ -823,8 +847,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         if isRecording {
             isCapturingTail = false
             isRecording = false
-            previewTimer?.invalidate()
-            previewTimer = nil
             audioHealthCheckTimer?.invalidate()
             audioHealthCheckTimer = nil
             audioRecoveryTimer?.invalidate()
@@ -846,65 +868,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         pendingASRTask = nil
         Task { @MainActor in
             await inflight?.value
-            // Also wait for a preview that was in the middle of running.
-            let deadline = Date().addingTimeInterval(2.0)
-            while isPreviewTranscribing && Date() < deadline {
-                try? await Task.sleep(for: .milliseconds(25))
-            }
             meetingToggleAction?()
-        }
-    }
-
-    // MARK: - Streaming Preview
-
-    /// Runs a preview transcription on the current accumulated audio buffer.
-    /// Called periodically during recording when streaming preview is enabled.
-    private func runPreviewTranscription() {
-        guard isRecording, let engine = asrEngine, !isPreviewTranscribing else { return }
-        // Apple's engine isn't suited for polling — every call rewrites a WAV and runs
-        // a fresh SF recognizer, which both wastes work and collides with the final
-        // transcribe over the shared temp file. Caller should already gate this, but
-        // we double-check here so accidental future hookups don't reintroduce the bug.
-        guard !(engine is AppleASREngine) else { return }
-
-        let chunks = readAudioChunks()
-        let samples = mergeAudioSamples(from: chunks)
-
-        // Need at least 1 second of audio for meaningful preview
-        guard samples.count >= 16000 else { return }
-
-        // Skip only truly-silent buffers. 0.003 ≈ -50 dB — anything quieter is
-        // background hiss / dead mic, anything louder is real (possibly soft) speech.
-        // Previously gated at 0.01 (-40 dB), which rejected normal quiet speech.
-        let rms = sqrt(samples.reduce(0) { $0 + $1 * $1 } / Float(samples.count))
-        guard rms > 0.003 else { return }
-
-        isPreviewTranscribing = true
-
-        let capturedContext = Self.buildHotwordContext(configManager.hotwords, appName: recordingAppContext)
-
-        Task.detached { [weak self, engine] in
-            // nil = auto-detect language. Qwen3-ASR is genuinely multilingual;
-            // pinning a language here was an old default from when only Chinese
-            // was tested, and it caused Japanese/English speech to be decoded
-            // as Mandarin homophones.
-            let text = engine.transcribe(
-                audio: samples,
-                sampleRate: 16000,
-                language: nil,
-                context: capturedContext
-            )
-            // Preview runs every 1.5s during recording — by far the heaviest
-            // contributor to MLX cache growth in normal use. Reclaim each pass
-            // so the cache never balloons mid-recording.
-            MLXMemoryGovernor.reclaim()
-            await MainActor.run {
-                guard let self else { return }
-                self.isPreviewTranscribing = false
-                if !text.isEmpty {
-                    RecordingOverlayPanel.shared.updateStreamingText(text)
-                }
-            }
         }
     }
 
@@ -1170,7 +1134,8 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
 
     /// Process cloud streaming result and inject text.
     private func processAndInject(text: String, chunks: [Data]) async {
-        defer { RecordingOverlayPanel.shared.hide() }
+        // No hide() here — handleKeyRelease already hid the overlay the
+        // instant the user let go. Error paths re-show via showBriefMessage.
 
         guard !text.isEmpty else {
             state = .ready
@@ -1179,7 +1144,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
 
         var processedText = TextProcessor.process(
             text: text,
-            removeFillers: removeFillers,
+            removeFillers: configManager.removeFillers,
             rules: configManager.replacements
         )
 
@@ -1194,14 +1159,11 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         let notes = configManager.localLLMNotes
         let polisher: (any TextPolisher)?
 
-        if configManager.llmProviderType == "cloud",
-           configManager.cloudLLMEnabled,
+        if configManager.cloudLLMEnabled,
            let provider = LLMProvider(rawValue: configManager.llmProvider),
            provider != .none {
             let creds = configManager.llmCredentials[provider.rawValue] ?? ProviderCredentials()
             polisher = LLMClient(provider: provider, credentials: creds, userNotes: notes)
-        } else if configManager.llmProviderType == "local", let chatModel, chatModelReady {
-            polisher = LocalLLMClient(model: chatModel, userNotes: notes)
         } else {
             polisher = nil
         }
@@ -1222,48 +1184,25 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             }
         }
 
-        if currentRecordingStreamingPreview {
-            RecordingOverlayPanel.shared.updateStreamingText(processedText)
-        }
-
         TextInjector.typeText(processedText, preserveClipboard: configManager.preserveClipboard)
         playEndSound()
 
-        // Self-learning feedback
-        if configManager.selfLearningEnabled, processedText.count >= 4 {
-            if let windowInfo = FeedbackCollector.captureFrontmostWindowInfo() {
-                pendingFeedback = FeedbackCollector.PendingFeedback(
-                    injectedText: processedText,
-                    windowID: windowInfo.windowID,
-                    bundleID: windowInfo.bundleID,
-                    timestamp: Date()
-                )
-                keyboardListener?.feedbackPending = true
-                feedbackExpiryTimer?.invalidate()
-                feedbackExpiryTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
-                    Task { @MainActor in self?.clearPendingFeedback() }
-                }
-            }
-        }
-
         let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         let record = TranscriptionRecord(text: processedText, duration: duration)
-        if !configManager.privacyMode {
-            Task { await historyStore.insert(record) }
-        }
+        Task { await historyStore.insert(record) }
+        // Voice input just completed — History tab opens on this segment next.
+        configManager.lastHistoryKind = "voice"
     }
 
     private func transcribeAndInject(chunks: [Data]) async {
-        var shouldHideOverlay = true
-        defer {
-            if shouldHideOverlay { RecordingOverlayPanel.shared.hide() }
-        }
+        // No defer { hide() } — the overlay was already hidden the moment
+        // the user released the key. Only the error paths below need to
+        // re-surface it via showBriefMessage.
 
         debugLog("transcribeAndInject: chunks=\(chunks.count), totalBytes=\(chunks.reduce(0) { $0 + $1.count })")
 
         guard !chunks.isEmpty else {
             debugLog("transcribeAndInject SKIPPED: chunks empty — mic delivered no audio")
-            shouldHideOverlay = false
             RecordingOverlayPanel.shared.showBriefMessage("麦克风无输入，可能被其他 app 占用")
             state = .ready
             return
@@ -1279,7 +1218,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
 
         guard !allSamples.isEmpty else {
             debugLog("transcribeAndInject SKIPPED: allSamples empty after merge (skipSamples=\(skipSamples))")
-            shouldHideOverlay = false
             RecordingOverlayPanel.shared.showBriefMessage("录音过短，没捕获到声音")
             state = .ready
             return
@@ -1292,7 +1230,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         // when said quickly.)
         guard allSamples.count >= 2400 else {
             debugLog("transcribeAndInject SKIPPED: too short, samples=\(allSamples.count) (need ≥2400)")
-            shouldHideOverlay = false
             RecordingOverlayPanel.shared.showBriefMessage("录音过短（不到 0.15 秒）")
             state = .ready
             return
@@ -1307,7 +1244,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         let rms = sqrt(allSamples.reduce(0) { $0 + $1 * $1 } / Float(allSamples.count))
         guard rms > 0.003 else {
             debugLog("transcribeAndInject SKIPPED: silent audio, RMS=\(rms) (threshold=0.003), samples=\(allSamples.count)")
-            shouldHideOverlay = false
             let msg = rms == 0.0
                 ? "麦克风无输入，可能被其他 app 占用"
                 : "声音太小，请靠近麦克风"
@@ -1321,14 +1257,20 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         let hotwords = configManager.hotwords
         let capturedContext = Self.buildHotwordContext(hotwords, appName: recordingAppContext)
 
+        // Apple's recognizer is locale-bound and cannot auto-detect, so pass the
+        // user's chosen voice-input language. Qwen3-ASR is multilingual — keep
+        // nil so it auto-detects (pinning a hint forced Japanese/English speech
+        // into Mandarin homophone mode).
+        let asrLanguage: String? = (engine is AppleASREngine)
+            ? configManager.voiceInputLanguage.asrLanguageHint
+            : nil
+
         // Run transcription on background thread to keep UI responsive.
-        // language: nil = auto-detect (Qwen3-ASR is multilingual; pinning a
-        // hint forced Japanese/English speech into Mandarin homophone mode).
         let text = await Task.detached { [engine] in
             let result = engine.transcribe(
                 audio: allSamples,
                 sampleRate: 16000,
-                language: nil,
+                language: asrLanguage,
                 context: capturedContext
             )
             // Drop MLX intermediate buffers from the recycle pool. Variable
@@ -1342,7 +1284,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         // Process text (Layer 1 filler removal + Layer 2 ITN + replacements)
         var processedText = TextProcessor.process(
             text: text,
-            removeFillers: removeFillers,
+            removeFillers: configManager.removeFillers,
             rules: configManager.replacements
         )
         debugLog("After TextProcessor: \"\(processedText)\"")
@@ -1352,7 +1294,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
 
         guard !processedText.isEmpty, !isHotwordHallucination, !isSilenceHallucination else {
             debugLog("transcribeAndInject SKIPPED: processedText empty=\(processedText.isEmpty), isHotwordHallucination=\(isHotwordHallucination), isSilenceHallucination=\(isSilenceHallucination)")
-            shouldHideOverlay = false
             let msg = isSilenceHallucination
                 ? "没识别到有效语音，请检查麦克风"
                 : (processedText.isEmpty ? "没识别到内容，请重试" : "识别异常，请重试")
@@ -1368,16 +1309,12 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         let notes = configManager.localLLMNotes
         let polisher: (any TextPolisher)?
 
-        if configManager.llmProviderType == "cloud",
-           configManager.cloudLLMEnabled,
+        if configManager.cloudLLMEnabled,
            let provider = LLMProvider(rawValue: configManager.llmProvider),
            provider != .none {
             let creds = configManager.llmCredentials[provider.rawValue] ?? ProviderCredentials()
             NSLog("[VoiceService] LLM polish (cloud/%@): input=\"%@\", notes=\"%@\"", provider.rawValue, processedText, notes)
             polisher = LLMClient(provider: provider, credentials: creds, userNotes: notes)
-        } else if configManager.llmProviderType == "local", let chatModel, chatModelReady {
-            NSLog("[VoiceService] LLM polish (local): input=\"%@\", notes=\"%@\"", processedText, notes)
-            polisher = LocalLLMClient(model: chatModel, userNotes: notes)
         } else {
             polisher = nil
             NSLog("[VoiceService] LLM polish: skipped (not configured or model not ready)")
@@ -1397,82 +1334,17 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             }
         }
 
-        // Update panel with final text before injection
-        if currentRecordingStreamingPreview {
-            RecordingOverlayPanel.shared.updateStreamingText(processedText)
-        }
-
-        // Inject text
+        // Inject text — no panel update; the overlay is already hidden, so
+        // displaying the final text in it would have no visible effect.
         TextInjector.typeText(processedText, preserveClipboard: configManager.preserveClipboard)
         playEndSound()
-
-        // Set up self-learning feedback if enabled (async to avoid blocking)
-        debugLog("selfLearningEnabled=\(configManager.selfLearningEnabled), textLen=\(processedText.count)")
-        if configManager.selfLearningEnabled, processedText.count >= 4 {
-            Task { @MainActor in
-                if let windowInfo = FeedbackCollector.captureFrontmostWindowInfo() {
-                    debugLog("Feedback setup: windowID=\(windowInfo.windowID), bundleID=\(windowInfo.bundleID)")
-                    pendingFeedback = FeedbackCollector.PendingFeedback(
-                        injectedText: processedText,
-                        windowID: windowInfo.windowID,
-                        bundleID: windowInfo.bundleID,
-                        timestamp: Date()
-                    )
-                    keyboardListener?.feedbackPending = true
-
-                    // Expire after 30 seconds
-                    feedbackExpiryTimer?.invalidate()
-                    feedbackExpiryTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
-                        Task { @MainActor in
-                            self?.clearPendingFeedback()
-                        }
-                    }
-                }
-            }
-        }
 
         // Record to history
         let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         let record = TranscriptionRecord(text: processedText, duration: duration)
-        if !configManager.privacyMode {
-            Task { await historyStore.insert(record) }
-        }
-    }
-
-    // MARK: - Self-Learning Feedback
-
-    private func handleEnterPress() {
-        debugLog("handleEnterPress called, pendingFeedback=\(pendingFeedback == nil ? "nil" : "exists")")
-        guard let pending = pendingFeedback else { return }
-        guard Date().timeIntervalSince(pending.timestamp) < 30 else {
-            debugLog("Feedback expired (\(Date().timeIntervalSince(pending.timestamp))s)")
-            clearPendingFeedback()
-            return
-        }
-
-        let capturedPending = pending
-        clearPendingFeedback()
-
-        Task {
-            let actualText = await FeedbackCollector.collectText(for: capturedPending)
-            debugLog("OCR result: \(actualText ?? "nil")")
-            guard let actualText else { return }
-            debugLog("Injected: \(capturedPending.injectedText) | Actual: \(actualText)")
-            await CorrectionAnalyzer.processCorrection(
-                injected: capturedPending.injectedText,
-                actual: actualText,
-                bundleID: capturedPending.bundleID,
-                correctionStore: correctionStore,
-                configManager: configManager
-            )
-        }
-    }
-
-    private func clearPendingFeedback() {
-        pendingFeedback = nil
-        keyboardListener?.feedbackPending = false
-        feedbackExpiryTimer?.invalidate()
-        feedbackExpiryTimer = nil
+        Task { await historyStore.insert(record) }
+        // Voice input just completed — History tab opens on this segment next.
+        configManager.lastHistoryKind = "voice"
     }
 
     // MARK: - Hotword Context
@@ -1497,10 +1369,9 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         return parts.joined(separator: "。") + "。"
     }
 
-    /// Captures the frontmost non-VoiceBubble app's localized name. Returns nil in
-    /// privacy mode or when the frontmost app is our own process (panel focus edge case).
-    static func captureFrontmostAppName(privacyMode: Bool) -> String? {
-        guard !privacyMode else { return nil }
+    /// Captures the frontmost non-VoiceBubble app's localized name. Returns nil
+    /// when the frontmost app is our own process (panel focus edge case).
+    static func captureFrontmostAppName() -> String? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         // Skip our own bundle — panel can briefly be frontmost in edge cases.
         if app.bundleIdentifier == Bundle.main.bundleIdentifier { return nil }
@@ -1751,56 +1622,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         )
     }
 
-    // MARK: - Polish Model Management
-
-    /// Manually start the local polish model (download + load).
-    func startChatModel() {
-        guard !chatModelReady, !chatModelLoading else { return }
-        chatModelLoading = true
-        chatModelDownloadProgress = nil
-        Task { @MainActor in
-            do {
-                let currentModel = PolishModel(rawValue: configManager.polishModel) ?? .qwen3Chat
-                let modelId = currentModel.huggingFaceId
-                let approxTotal: Int64 = 318_000_000
-                print("[VoiceService] Loading polish model: \(modelId)")
-                let model = try await Qwen3ChatModel.fromPretrained(
-                    modelId: modelId,
-                    progressHandler: { [weak self] progress, status in
-                        Task { @MainActor in
-                            let downloaded = Int64(progress * Double(approxTotal))
-                            self?.chatModelDownloadProgress = DownloadProgress(
-                                downloaded: downloaded,
-                                total: approxTotal,
-                                description: status
-                            )
-                        }
-                    }
-                )
-                self.chatModel = model
-                self.chatModelReady = true
-                self.chatModelLoading = false
-                self.chatModelDownloadProgress = nil
-                print("[VoiceService] Polish model ready")
-            } catch {
-                print("[VoiceService] Polish model load failed: \(error)")
-                self.chatModelLoading = false
-                self.chatModelDownloadProgress = nil
-            }
-        }
-    }
-
-    /// Manually stop and unload the local polish model.
-    func stopChatModel() {
-        if let model = chatModel {
-            model.unload()
-            chatModel = nil
-        }
-        chatModelReady = false
-        chatModelLoading = false
-        chatModelDownloadProgress = nil
-    }
-
     // MARK: - Helpers
 
     /// Update keyboard listener when trigger key changes. Call after restart.
@@ -1814,10 +1635,5 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// Expose the keyboard listener for MeetingService to set meetingActive.
     var keyboardListenerRef: KeyboardListener? {
         keyboardListener
-    }
-
-    /// Expose the ASR engine for MeetingService to borrow.
-    var asrEngineRef: (any ASREngineProtocol)? {
-        asrEngine
     }
 }

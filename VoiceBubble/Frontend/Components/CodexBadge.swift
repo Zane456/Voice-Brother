@@ -28,7 +28,7 @@ struct CodexBadge: View {
                     .foregroundColor(fg)
             }
             Text(text)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(fg)
             if let onClose {
                 Button(action: onClose) {
