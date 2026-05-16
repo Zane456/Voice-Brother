@@ -39,16 +39,28 @@ final class AppConfig: ObservableObject {
     @Published var preserveClipboard: Bool {
         didSet { scheduleSave() }
     }
-    @Published var streamingPreview: Bool {
+    /// Retention window (months) for voice transcription history.
+    @Published var historyRetentionMonths: Int {
         didSet { scheduleSave() }
     }
-    @Published var previewFontSize: Double {
+    /// Retention window (months) for meeting markdown + audio files.
+    @Published var meetingRetentionMonths: Int {
         didSet { scheduleSave() }
     }
     @Published var onboardingDone: Bool {
         didSet { scheduleSave() }
     }
     @Published var migratedFromVoiceAura: Bool {
+        didSet { scheduleSave() }
+    }
+    /// Which History tab segment to show on open — tracks the most recently
+    /// completed task. "voice" or "meeting".
+    @Published var lastHistoryKind: String {
+        didSet { scheduleSave() }
+    }
+    /// When true, meetings additionally record the main display to a .mov
+    /// video file (with mixed mic + system audio). Off by default.
+    @Published var meetingScreenRecording: Bool {
         didSet { scheduleSave() }
     }
 
@@ -61,12 +73,6 @@ final class AppConfig: ObservableObject {
         didSet { scheduleSave() }
     }
     @Published var cloudASRCredentials: [String: ProviderCredentials] {
-        didSet { scheduleSave() }
-    }
-    @Published var llmProviderType: String {
-        didSet { scheduleSave() }
-    }
-    @Published var polishModel: String {
         didSet { scheduleSave() }
     }
     @Published var llmProvider: String {
@@ -83,15 +89,21 @@ final class AppConfig: ObservableObject {
     }
 
     // MARK: - Meeting ASR
-    //
-    // Intentionally empty — meetings reuse VoiceService's engine
-    // (loaded from `model` above). See ConfigManager for the back-story.
 
-    // MARK: - Meeting LLM
-
-    @Published var meetingLLMProvider: String {
+    /// ASR model used for meeting transcription, independent of voice input's
+    /// `model`. Always a local Qwen model (the UI never offers Apple Speech
+    /// here) — stored as an `ASRModel` rawValue. Meetings load this model on
+    /// start and unload it on stop, so it occupies no memory between meetings.
+    @Published var meetingASRModel: String {
         didSet { scheduleSave() }
     }
+
+    // MARK: - Meeting LLM
+    //
+    // Meeting shares the voice LLM provider (`llmProvider`) — there is no
+    // separate meeting provider. The meeting-specific model is stored per
+    // provider in `ProviderCredentials.meetingModel`.
+
     @Published var meetingLLMCredentials: [String: ProviderCredentials] {
         didSet { scheduleSave() }
     }
@@ -108,6 +120,13 @@ final class AppConfig: ObservableObject {
     @Published var meetingLanguage: String {
         didSet { scheduleSave() }
     }
+    /// Language for voice-input transcription on the Apple Speech engine.
+    /// Stored as the raw `VoiceInputLanguage` value ("Chinese" / "English" /
+    /// "Japanese"). Apple's on-device recognizer is locale-bound and cannot
+    /// auto-detect; Qwen ignores this and auto-detects.
+    @Published var voiceInputLanguage: String {
+        didSet { scheduleSave() }
+    }
 
     // MARK: - Prompt Presets (user-defined templates)
 
@@ -117,23 +136,6 @@ final class AppConfig: ObservableObject {
     }
     /// User-saved 会议摘要 presets, name → prompt body.
     @Published var meetingCustomPresets: [String: String] {
-        didSet { scheduleSave() }
-    }
-
-    // MARK: - Privacy
-
-    /// Master privacy mode: when on, history saving + smart learning + cloud
-    /// providers are all suppressed at the UI layer.
-    @Published var privacyMode: Bool {
-        didSet { scheduleSave() }
-    }
-
-    // MARK: - Self-Learning
-
-    @Published var selfLearningEnabled: Bool {
-        didSet { scheduleSave() }
-    }
-    @Published var selfLearningThreshold: Int {
         didSet { scheduleSave() }
     }
 
@@ -162,8 +164,8 @@ final class AppConfig: ObservableObject {
     static let defaultRemoveFillers = true
     static let defaultSpaceReposition = true
     static let defaultPreserveClipboard = true
-    static let defaultStreamingPreview = false
-    static let defaultPreviewFontSize: Double = 16
+    static let defaultHistoryRetentionMonths = 2
+    static let defaultMeetingRetentionMonths = 2
     static let defaultMeetingSavePath: String = {
         let path = NSHomeDirectory() + "/Documents/Voice Bubble/"
         try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
@@ -171,6 +173,8 @@ final class AppConfig: ObservableObject {
     }()
     static let defaultOnboardingDone = false
     static let defaultMigrated = false
+    static let defaultLastHistoryKind = "voice"
+    static let defaultMeetingScreenRecording = false
 
     // Model management defaults
     static let defaultASRProviderType = "local"
@@ -179,17 +183,17 @@ final class AppConfig: ObservableObject {
     // filtered out of the picker via isImplemented=false).
     static let defaultCloudASRProvider = CloudASRProvider.volcanoASR.rawValue
     static let defaultCloudASRCredentials: [String: ProviderCredentials] = [:]
-    static let defaultLLMProviderType = "local"
-    static let defaultPolishModel = PolishModel.qwen3Chat.rawValue
     static let defaultLLMProvider = LLMProvider.openRouter.rawValue
     static let defaultLLMCredentials: [String: ProviderCredentials] = [:]
     static let defaultLocalLLMNotes = ""
     static let defaultCloudLLMEnabled = false
 
-    // (Meeting ASR defaults removed — meetings share the voice input engine.)
+    // Meeting ASR default — 0.6B for the same reason as `defaultModel`: it's
+    // the model preloaded by `package-for-friend.sh`, so a fresh install can
+    // record a meeting without a 2.5GB download first.
+    static let defaultMeetingASRModel = ASRModel.small.rawValue
 
     // Meeting LLM defaults
-    static let defaultMeetingLLMProvider = LLMProvider.openRouter.rawValue
     static let defaultMeetingLLMCredentials: [String: ProviderCredentials] = [:]
     static let defaultMeetingLLMEnabled = false
     // Pre-fill with the built-in "对话整理" preset so enabling summary doesn't
@@ -198,17 +202,11 @@ final class AppConfig: ObservableObject {
     // "应用模板 → 默认（对话整理）" menu item are guaranteed to match.
     static let defaultMeetingSummaryPrompt = PromptPreset.defaultMeetingDialogPrompt
     static let defaultMeetingLanguage = MeetingLanguage.auto.rawValue
-
-    // Self-learning defaults
-    static let defaultSelfLearningEnabled = true
-    static let defaultSelfLearningThreshold = 3
+    static let defaultVoiceInputLanguage = VoiceInputLanguage.chinese.rawValue
 
     // Prompt presets defaults
     static let defaultPolishCustomPresets: [String: String] = [:]
     static let defaultMeetingCustomPresets: [String: String] = [:]
-
-    // Privacy defaults
-    static let defaultPrivacyMode = false
 
     // MARK: - Persistence
     private static let configURL: URL = {
@@ -228,10 +226,12 @@ final class AppConfig: ObservableObject {
         self.spaceReposition = Self.load("spaceReposition", default: Self.defaultSpaceReposition)
         self.meetingSavePath = Self.load("meetingSavePath", default: Self.defaultMeetingSavePath)
         self.preserveClipboard = Self.load("preserveClipboard", default: Self.defaultPreserveClipboard)
-        self.streamingPreview = Self.load("streamingPreview", default: Self.defaultStreamingPreview)
-        self.previewFontSize = Self.load("previewFontSize", default: Self.defaultPreviewFontSize)
+        self.historyRetentionMonths = Self.load("historyRetentionMonths", default: Self.defaultHistoryRetentionMonths)
+        self.meetingRetentionMonths = Self.load("meetingRetentionMonths", default: Self.defaultMeetingRetentionMonths)
         self.onboardingDone = Self.load("onboardingDone", default: Self.defaultOnboardingDone)
         self.migratedFromVoiceAura = Self.load("migratedFromVoiceAura", default: Self.defaultMigrated)
+        self.lastHistoryKind = Self.load("lastHistoryKind", default: Self.defaultLastHistoryKind)
+        self.meetingScreenRecording = Self.load("meetingScreenRecording", default: Self.defaultMeetingScreenRecording)
 
         // Model management
         self.asrProviderType = Self.load("asrProviderType", default: Self.defaultASRProviderType)
@@ -242,42 +242,18 @@ final class AppConfig: ObservableObject {
         self.cloudASRProvider = (loadedCloudASR == "openai_whisper" || loadedCloudASR == "deepgram")
             ? CloudASRProvider.volcanoASR.rawValue
             : loadedCloudASR
-        self.polishModel = Self.load("polishModel", default: Self.defaultPolishModel)
         self.llmProvider = Self.load("llmProvider", default: Self.defaultLLMProvider)
         self.localLLMNotes = Self.load("localLLMNotes", default: Self.defaultLocalLLMNotes)
         self.cloudLLMEnabled = Self.load("cloudLLMEnabled", default: Self.defaultCloudLLMEnabled)
 
-        // Migrate llmProviderType from old llmProvider setting
-        if UserDefaults.standard.object(forKey: "llmProviderType") == nil {
-            if let oldProvider = UserDefaults.standard.string(forKey: "llmProvider") {
-                // Existing user: preserve their old choice
-                if oldProvider == "none" {
-                    self.llmProviderType = "local"
-                } else {
-                    self.llmProviderType = "cloud"
-                }
-            } else {
-                // Fresh install: default to local
-                self.llmProviderType = Self.defaultLLMProviderType
-            }
-        } else {
-            self.llmProviderType = Self.load("llmProviderType", default: Self.defaultLLMProviderType)
-        }
-
-        // Meeting ASR — no fields to load; engine is shared with voice input.
+        // Meeting ASR
+        self.meetingASRModel = Self.load("meetingASRModel", default: Self.defaultMeetingASRModel)
 
         // Meeting LLM
-        self.meetingLLMProvider = Self.load("meetingLLMProvider", default: Self.defaultMeetingLLMProvider)
         self.meetingLLMEnabled = Self.load("meetingLLMEnabled", default: Self.defaultMeetingLLMEnabled)
         self.meetingSummaryPrompt = Self.load("meetingSummaryPrompt", default: Self.defaultMeetingSummaryPrompt)
         self.meetingLanguage = Self.load("meetingLanguage", default: Self.defaultMeetingLanguage)
-
-        // Self-learning
-        self.selfLearningEnabled = Self.load("selfLearningEnabled", default: Self.defaultSelfLearningEnabled)
-        self.selfLearningThreshold = Self.load("selfLearningThreshold", default: Self.defaultSelfLearningThreshold)
-
-        // Privacy
-        self.privacyMode = Self.load("privacyMode", default: Self.defaultPrivacyMode)
+        self.voiceInputLanguage = Self.load("voiceInputLanguage", default: Self.defaultVoiceInputLanguage)
 
         // Prompt presets (custom user-defined)
         self.polishCustomPresets = Self.loadDict("polishCustomPresets", default: Self.defaultPolishCustomPresets)
@@ -355,31 +331,27 @@ final class AppConfig: ObservableObject {
         defaults.set(spaceReposition, forKey: "spaceReposition")
         defaults.set(meetingSavePath, forKey: "meetingSavePath")
         defaults.set(preserveClipboard, forKey: "preserveClipboard")
-        defaults.set(streamingPreview, forKey: "streamingPreview")
-        defaults.set(previewFontSize, forKey: "previewFontSize")
+        defaults.set(historyRetentionMonths, forKey: "historyRetentionMonths")
+        defaults.set(meetingRetentionMonths, forKey: "meetingRetentionMonths")
         defaults.set(onboardingDone, forKey: "onboardingDone")
         defaults.set(migratedFromVoiceAura, forKey: "migratedFromVoiceAura")
+        defaults.set(lastHistoryKind, forKey: "lastHistoryKind")
+        defaults.set(meetingScreenRecording, forKey: "meetingScreenRecording")
 
         // Model management
         defaults.set(asrProviderType, forKey: "asrProviderType")
         defaults.set(cloudASRProvider, forKey: "cloudASRProvider")
-        defaults.set(llmProviderType, forKey: "llmProviderType")
-        defaults.set(polishModel, forKey: "polishModel")
         defaults.set(llmProvider, forKey: "llmProvider")
         defaults.set(localLLMNotes, forKey: "localLLMNotes")
         defaults.set(cloudLLMEnabled, forKey: "cloudLLMEnabled")
 
-        // Meeting ASR — no fields to save; engine is shared with voice input.
+        // Meeting ASR
+        defaults.set(meetingASRModel, forKey: "meetingASRModel")
 
         // Meeting LLM
-        defaults.set(meetingLLMProvider, forKey: "meetingLLMProvider")
         defaults.set(meetingLLMEnabled, forKey: "meetingLLMEnabled")
         defaults.set(meetingSummaryPrompt, forKey: "meetingSummaryPrompt")
         defaults.set(meetingLanguage, forKey: "meetingLanguage")
-
-        // Self-learning
-        defaults.set(selfLearningEnabled, forKey: "selfLearningEnabled")
-        defaults.set(selfLearningThreshold, forKey: "selfLearningThreshold")
 
         // Save complex types as JSON
         if let hwData = try? JSONEncoder().encode(hotwords) {
@@ -399,9 +371,6 @@ final class AppConfig: ObservableObject {
         if let meetingLLMCredsData = try? JSONEncoder().encode(Self.scrubKeysForDisk(meetingLLMCredentials, bucket: "meetingLLM")) {
             defaults.set(meetingLLMCredsData, forKey: "meetingLLMCredentials")
         }
-
-        // Privacy
-        defaults.set(privacyMode, forKey: "privacyMode")
 
         // Prompt presets
         if let data = try? JSONEncoder().encode(polishCustomPresets) {

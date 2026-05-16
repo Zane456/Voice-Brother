@@ -57,17 +57,25 @@ final class ConfigManager: ObservableObject, ConfigManagerProtocol {
         get { appConfig.preserveClipboard }
         set { appConfig.preserveClipboard = newValue }
     }
-    var streamingPreview: Bool {
-        get { appConfig.streamingPreview }
-        set { appConfig.streamingPreview = newValue }
+    var historyRetentionMonths: Int {
+        get { appConfig.historyRetentionMonths }
+        set { appConfig.historyRetentionMonths = newValue }
     }
-    var previewFontSize: Double {
-        get { appConfig.previewFontSize }
-        set { appConfig.previewFontSize = newValue }
+    var meetingRetentionMonths: Int {
+        get { appConfig.meetingRetentionMonths }
+        set { appConfig.meetingRetentionMonths = newValue }
     }
     var onboardingDone: Bool {
         get { appConfig.onboardingDone }
         set { appConfig.onboardingDone = newValue }
+    }
+    var lastHistoryKind: String {
+        get { appConfig.lastHistoryKind }
+        set { appConfig.lastHistoryKind = newValue }
+    }
+    var meetingScreenRecording: Bool {
+        get { appConfig.meetingScreenRecording }
+        set { appConfig.meetingScreenRecording = newValue }
     }
 
     // MARK: - Model Management
@@ -83,14 +91,6 @@ final class ConfigManager: ObservableObject, ConfigManagerProtocol {
     var cloudASRCredentials: [String: ProviderCredentials] {
         get { appConfig.cloudASRCredentials }
         set { appConfig.cloudASRCredentials = newValue }
-    }
-    var llmProviderType: String {
-        get { appConfig.llmProviderType }
-        set { appConfig.llmProviderType = newValue }
-    }
-    var polishModel: String {
-        get { appConfig.polishModel }
-        set { appConfig.polishModel = newValue }
     }
     var llmProvider: String {
         get { appConfig.llmProvider }
@@ -120,10 +120,6 @@ final class ConfigManager: ObservableObject, ConfigManagerProtocol {
 
     // MARK: - Meeting LLM
 
-    var meetingLLMProvider: String {
-        get { appConfig.meetingLLMProvider }
-        set { appConfig.meetingLLMProvider = newValue }
-    }
     var meetingLLMCredentials: [String: ProviderCredentials] {
         get { appConfig.meetingLLMCredentials }
         set { appConfig.meetingLLMCredentials = newValue }
@@ -143,6 +139,25 @@ final class ConfigManager: ObservableObject, ConfigManagerProtocol {
         set { appConfig.meetingLanguage = newValue.rawValue }
     }
 
+    /// Voice-input transcription language for the Apple Speech engine. Stored
+    /// as a raw string; falls back to Chinese on unknown values. The Qwen
+    /// engine ignores this and auto-detects.
+    var voiceInputLanguage: VoiceInputLanguage {
+        get { VoiceInputLanguage(rawValue: appConfig.voiceInputLanguage) ?? .chinese }
+        set { appConfig.voiceInputLanguage = newValue.rawValue }
+    }
+
+    /// ASR model for meeting transcription, independent of voice input's
+    /// `model`. Constrained to local Qwen models — an Apple/cloud value (or
+    /// anything unknown) falls back to the 0.6B model.
+    var meetingASRModel: ASRModel {
+        get {
+            guard let m = ASRModel(rawValue: appConfig.meetingASRModel), m.isQwen else { return .small }
+            return m
+        }
+        set { appConfig.meetingASRModel = newValue.rawValue }
+    }
+
     // MARK: - Prompt Presets
 
     var polishCustomPresets: [String: String] {
@@ -152,24 +167,6 @@ final class ConfigManager: ObservableObject, ConfigManagerProtocol {
     var meetingCustomPresets: [String: String] {
         get { appConfig.meetingCustomPresets }
         set { appConfig.meetingCustomPresets = newValue }
-    }
-
-    // MARK: - Privacy
-
-    var privacyMode: Bool {
-        get { appConfig.privacyMode }
-        set { appConfig.privacyMode = newValue }
-    }
-
-    // MARK: - Self-Learning
-
-    var selfLearningEnabled: Bool {
-        get { appConfig.selfLearningEnabled }
-        set { appConfig.selfLearningEnabled = newValue }
-    }
-    var selfLearningThreshold: Int {
-        get { appConfig.selfLearningThreshold }
-        set { appConfig.selfLearningThreshold = newValue }
     }
 
     // MARK: - ConfigManagerProtocol
