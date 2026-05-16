@@ -56,3 +56,12 @@ dist/
 
 # Superpowers plans/specs (local dev artifacts)
 docs/superpowers/
+
+# Internal dev docs (not for public release)
+CLAUDE.md
+PROJECT.md
+TODO.md
+CODEX_DESIGN.md
+build_and_restart.command
+.claude/
+skills/
