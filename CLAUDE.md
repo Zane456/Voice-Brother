@@ -1,4 +1,4 @@
-# Voice Bubble - 项目指南
+# Voice Brother - 项目指南
 
 > macOS 原生语音输入应用。Swift + SwiftUI + MLX，按住说话，松开输入。
 
@@ -34,7 +34,7 @@
 保留 Voice Aura 的 **Glassmorphism 风格**，色板和动画参数从 Python 版搬运（见 PROJECT.md 3.2）。布局结构参考 Type4Me 的两栏式设计。注意：Voice Aura 的配色是**自定义色板**，不是系统语义色。
 
 ### 从 Python 版翻译
-`keyboard_listener.py`、`voice_service.py`、`config.py`、`meeting_service.py` 的核心逻辑可直接翻译。参考 PROJECT.md 第九章"可复用的代码/逻辑"表格。Python 版源码在 `/Users/zhangzheng/IDE project/Voice-Aura/`。
+`keyboard_listener.py`、`voice_service.py`、`config.py`、`meeting_service.py` 的核心逻辑可直接翻译。参考 PROJECT.md 第九章"可复用的代码/逻辑"表格。Python 版源码在 `~/IDE project/Voice-Aura/`。
 
 ## Skill 路由
 
@@ -57,7 +57,7 @@
 | 查 speech-swift 库的最新 API 或 issue | `zread`（读 GitHub 仓库）或 `gh` CLI |
 | 查 Apple 文档 / SwiftUI API | `perplexity_search` → `WebFetch` 验证 |
 | 搜索 macOS 开发最佳实践 | `perplexity_search` |
-| 读 Voice Aura Python 源码（翻译参考） | 直接 `Read` 工具读 `/Users/zhangzheng/IDE project/Voice-Aura/` |
+| 读 Voice Aura Python 源码（翻译参考） | 直接 `Read` 工具读 `~/IDE project/Voice-Aura/` |
 | 跨会话搜索历史上下文 | `claude-mem` search（不传 project 参数可全量检索） |
 
 ## 开发阶段
@@ -93,10 +93,10 @@ MeetingService 直接访问了 VoiceService 的内部属性，**不在 Protocol 
 
 | MeetingService 代码 | 访问的 VoiceService 内部 | 风险 |
 |--------------------|-----------------------|------|
-| `voiceService?.keyboardListenerRef?.isMeetingActive = true` (4处) | `keyboardListenerRef` 属性 + `isMeetingActive` 标志（**已改为锁保护 getter/setter**） | 重命名/重构 KeyboardListener 时会炸 |
-| `voiceService?.asrEngineRef` (2处) | `asrEngineRef` 属性（共享 engine；`handleMeetingToggle` 现在会 await `pendingASRTask` 才把 engine 交给会议） | 改模型管理方式时会炸 |
+| `voiceService?.keyboardListenerRef?.isMeetingActive = true` (多处) | `keyboardListenerRef` 属性 + `isMeetingActive` 标志（**已改为锁保护 getter/setter**） | 重命名/重构 KeyboardListener 时会炸 |
 
-**修改 VoiceService 时必须同时检查 MeetingService 的这 6 处引用。**
+**修改 VoiceService 时必须同时检查 MeetingService 对 `keyboardListenerRef` 的引用。**
+ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Qwen 实例，结束即 `unload()`。
 
 ### 安全修改区域（改了不影响其他模块）
 
@@ -115,21 +115,21 @@ MeetingService 直接访问了 VoiceService 的内部属性，**不在 Protocol 
 ### 修改守则
 
 1. **改共享组件前**：先 grep 所有消费方，确认修改不会破坏它们
-2. **改 VoiceService 内部结构前**：检查 MeetingService 对 `keyboardListenerRef`、`asrModel` 的 6 处直接访问
+2. **改 VoiceService 内部结构前**：检查 MeetingService 对 `keyboardListenerRef` 的直接访问（ASR engine 已不再共享）
 3. **改 RecordingOverlayPanel 的 show/hide 逻辑前**：注意动画 completionHandler 的异步竞态（见已知问题）
 4. **改 Protocol 接口**：前后端必须同步更新，编译验证
 5. **改 Types/枚举**：全局搜索所有 switch/case，确认无遗漏
 6. **改完后必须自动构建并重启应用**（用户不使用 Xcode，所有操作由命令行完成）：
    ```bash
    # 1. 构建
-   cd "/Users/zhangzheng/IDE project/Voice Bubble"
-   xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet
+   cd "~/IDE project/Voice Brother"
+   xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet
 
    # 2. 关闭正在运行的旧实例
-   pkill -x "VoiceBubble" 2>/dev/null || true
+   pkill -x "VoiceBrother" 2>/dev/null || true
 
    # 3. 启动新构建的应用
-   open "/Users/zhangzheng/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
+   open "~/Library/Developer/Xcode/DerivedData/VoiceBrother-dopowvwzswipvocptpcwzjpqinvh/Build/Products/Debug/VoiceBrother.app"
    ```
    **每次修改代码后都必须执行这三步**，不要只构建不重启，也不要让用户手动去操作。
 
@@ -137,7 +137,7 @@ MeetingService 直接访问了 VoiceService 的内部属性，**不在 Protocol 
 
 ### speech-swift `HuggingFaceDownloader.downloadWeights` 加 cache-fast-path
 
-**位置**：`~/Library/Developer/Xcode/DerivedData/VoiceBubble-*/SourcePackages/checkouts/speech-swift/Sources/AudioCommon/HuggingFaceDownloader.swift`
+**位置**：`~/Library/Developer/Xcode/DerivedData/VoiceBrother-*/SourcePackages/checkouts/speech-swift/Sources/AudioCommon/HuggingFaceDownloader.swift`
 
 **为什么打这个补丁**：原版每次启动都调 `hub.snapshot()`，命中缓存的情况下仍然向 HuggingFace 发 6+ 次 HEAD 请求验证 etag。国内网络下额外多花 5-30 秒，体感"模型启动太久"。
 
@@ -148,11 +148,11 @@ MeetingService 直接访问了 VoiceService 的内部属性，**不在 Protocol 
 **判断完整性的依据**：HF metadata 文件只有在下载完整成功且写入 commit_hash/etag 后才会生成，所以它存在 ⇔ 文件不是半成品。
 
 **何时需要重打**：
-- 删除 `~/Library/Developer/Xcode/DerivedData/VoiceBubble-*` 之后
+- 删除 `~/Library/Developer/Xcode/DerivedData/VoiceBrother-*` 之后
 - `Package.resolved` 里的 speech-swift 版本变更后（SPM 会重新 fetch）
 - 任何触发 SPM resolve 的操作之后
 
-**重打步骤**：在补丁文件内搜 `VoiceBubble local patch` 找原位置，参照 git diff 重新粘贴两段。
+**重打步骤**：在补丁文件内搜 `VoiceBrother local patch` 找原位置，参照 git diff 重新粘贴两段。
 
 **根治方向**：往 speech-swift 上游提 PR 加 `localFilesOnly: Bool` 参数，命中缓存时跳过 hub.snapshot。
 
@@ -161,14 +161,16 @@ MeetingService 直接访问了 VoiceService 的内部属性，**不在 Protocol 
 ### ✅ 已修：P0 RecordingOverlayPanel 动画竞态
 已通过 `showToken` 引用计数解决。hide 的 completionHandler 在 token 变化时 bail out，不会再把新 show 的状态擦掉。
 
-### ✅ 已修：ASR 共享竞态
-VoiceService 新增 `pendingASRTask` 追踪正在进行的转写；`handleMeetingToggle` 在把共享 engine 交给 MeetingService 前会 `await pendingASRTask?.value`。MeetingService.cleanup 也改为 async 并 await 自己的 `pendingTranscriptionTask`。
+### ✅ 已修：ASR 共享竞态（已彻底消除）
+会议不再借用 VoiceService 的 engine——`MeetingService` 按 `configManager.meetingASRModel`
+加载自己的 Qwen 实例（`.preparing` 状态下加载，结束时 `unload()`）。两个服务的 ASR engine
+完全独立，不存在共享竞态。MeetingService.cleanup 仍 await 自己的 `pendingTranscriptionTask`。
 
 ### ✅ 已修：P0 MLX cache 失控（22+ GB RSS）
 **症状**：长时间使用后进程 RSS 涨到 20+ GB，最终触发 swap 颠簸。
 **根因**：MLX 默认 `cacheLimit = memoryLimit`（32GB Mac 上几乎等于无限制）。每次 `transcribe` 的音频长度不同 → 中间张量/KV-cache buffer 形状不同 → MLX 的 buffer 池**无法复用**变形 buffer，全部缓存沉积。文档原话："by the end of a long inference run, you may see several GB of cached memory ... if cache memory is unconstrained"。
 **修复**：新增 `Backend/Voice/MLXMemoryGovernor.swift`，启动时 `MLX.Memory.cacheLimit = 256 MB`，每次转写后调 `Memory.clearCache()`。接入点：
-- `VoiceBubbleApp.init()` 调 `configure()`
+- `VoiceBrotherApp.init()` 调 `configure()`
 - `VoiceService.transcribeAndInject` / `runPreviewTranscription`、`MeetingService.transcribeSegment`、`MeetingRetranscriber` 在转写完成后调 `reclaim()`
 - 调 `snapshotDescription()` 写日志便于回归监控
 
@@ -176,7 +178,7 @@ VoiceService 新增 `pendingASRTask` 追踪正在进行的转写；`handleMeetin
 **回归红线**：如果 active 持续上涨（不只是 peak），说明有新的 MLX 数组被作为长期持有的属性挂住了。
 
 ### P1（未修）：MeetingService 穿透访问 VoiceService 内部
-`voiceService?.keyboardListenerRef?.isMeetingActive` 和 `voiceService?.asrEngineRef` 绕过 Protocol 层。**已用锁保护 `isMeetingActive` getter/setter**，但架构层面仍破坏了前后端解耦。后续可在 VoiceServiceProtocol 中添加 `func setMeetingActive(_:)` 和 `func borrowASREngine() -> (any ASREngineProtocol)?`。
+`voiceService?.keyboardListenerRef?.isMeetingActive` 绕过 Protocol 层。**已用锁保护 `isMeetingActive` getter/setter**，但架构层面仍破坏了前后端解耦。后续可在 VoiceServiceProtocol 中添加 `func setMeetingActive(_:)`。（`asrEngineRef` 穿透已随会议独立模型一并移除。）
 
 ### P2（未修）：GeneralTab / VoiceSettingsSection 过大
 目标：每个 Tab 文件控制在 250 行以内。

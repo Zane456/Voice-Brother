@@ -1,9 +1,9 @@
 ---
 name: vb
-description: Voice Bubble project quick-start. Use when user says /vb, "open voice bubble", "打开 voice bubble", or starts working on the Voice Bubble macOS app. Navigates to the project, shows TODO status, and builds the app.
+description: Voice Brother project quick-start. Use when user says /vb, "open voice bubble", "打开 voice bubble", or starts working on the Voice Brother macOS app. Navigates to the project, shows TODO status, and builds the app.
 ---
 
-# Voice Bubble Quick Start
+# Voice Brother Quick Start
 
 Navigate to project, read TODO, build and launch.
 
@@ -11,7 +11,7 @@ Navigate to project, read TODO, build and launch.
 
 1. Set working directory:
    ```
-   cd "/Users/zhangzheng/IDE project/Voice Bubble"
+   cd "~/IDE project/Voice Brother"
    ```
 
 2. Read project instructions:
@@ -24,11 +24,11 @@ Navigate to project, read TODO, build and launch.
 
 4. Build and launch:
    ```bash
-   cd "/Users/zhangzheng/IDE project/Voice Bubble"
-   xcodebuild build -project VoiceBubble.xcodeproj -scheme VoiceBubble -quiet 2>/dev/null
-   pkill -x "VoiceBubble" 2>/dev/null || true
+   cd "~/IDE project/Voice Brother"
+   xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet 2>/dev/null
+   pkill -x "VoiceBrother" 2>/dev/null || true
    sleep 1
-   open "/Users/zhangzheng/Library/Developer/Xcode/DerivedData/VoiceBubble-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBubble.app"
+   open "~/Library/Developer/Xcode/DerivedData/VoiceBrother-arbvxvbxxsnfymbulsnszkqkgdon/Build/Products/Debug/VoiceBrother.app"
    ```
 
 5. Report build result (success/failure) and confirm app launched.
