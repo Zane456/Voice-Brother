@@ -176,9 +176,9 @@ final class AppConfig: ObservableObject {
 
     // Model management defaults
     static let defaultASRProviderType = "local"
-    // Default to the only currently-implemented cloud ASR provider so new
-    // users don't land on a disabled option (openaiWhisper/deepgram are
-    // filtered out of the picker via isImplemented=false).
+    // Keep the existing domestic cloud default. OpenAI Whisper is also
+    // implemented and selectable; Deepgram remains hidden until it has an
+    // engine.
     static let defaultCloudASRProvider = CloudASRProvider.volcanoASR.rawValue
     static let defaultCloudASRCredentials: [String: ProviderCredentials] = [:]
     static let defaultLLMProvider = LLMProvider.openRouter.rawValue
@@ -229,10 +229,9 @@ final class AppConfig: ObservableObject {
         // Model management
         self.asrProviderType = Self.load("asrProviderType", default: Self.defaultASRProviderType)
         let loadedCloudASR: String = Self.load("cloudASRProvider", default: Self.defaultCloudASRProvider)
-        // Auto-heal: openaiWhisper / deepgram are not implemented yet but some
-        // older builds stored them as defaults. Map to the one working provider
-        // so users don't land on a disabled option.
-        self.cloudASRProvider = (loadedCloudASR == "openai_whisper" || loadedCloudASR == "deepgram")
+        // Auto-heal: Deepgram is not implemented yet but some older builds
+        // could have stored it. Map to a working provider.
+        self.cloudASRProvider = (loadedCloudASR == "deepgram")
             ? CloudASRProvider.volcanoASR.rawValue
             : loadedCloudASR
         self.llmProvider = Self.load("llmProvider", default: Self.defaultLLMProvider)
@@ -496,6 +495,7 @@ final class AppConfig: ObservableObject {
         var llmCreds = decodeOrDefault([String: ProviderCredentials].self, key: "llmCredentials",
             data: defaults.data(forKey: "llmCredentials"), default: defaultLLMCredentials)
         migrated = hydrateKeysFromKeychain(&llmCreds, bucket: "llm") || migrated
+        migrated = migrateLegacyLLMDefaults(&llmCreds) || migrated
 
         // (Meeting Cloud ASR creds removed — meetings share the voice input engine.)
 
@@ -505,6 +505,43 @@ final class AppConfig: ObservableObject {
         migrated = hydrateKeysFromKeychain(&meetingLLMCreds, bucket: "meetingLLM") || migrated
 
         return (hotwords, replacements, cloudASRCreds, llmCreds, meetingLLMCreds, migrated)
+    }
+
+    /// Refresh stored values that exactly match old app defaults. User-entered
+    /// custom Base URLs / model IDs are left untouched.
+    @discardableResult
+    private static func migrateLegacyLLMDefaults(_ creds: inout [String: ProviderCredentials]) -> Bool {
+        var changed = false
+
+        func update(
+            provider: LLMProvider,
+            oldBaseURL: String? = nil,
+            oldModels: Set<String>
+        ) {
+            guard var cred = creds[provider.rawValue] else { return }
+            if let oldBaseURL, cred.baseURL == oldBaseURL {
+                cred.baseURL = provider.defaultBaseURL
+                changed = true
+            }
+            if oldModels.contains(cred.model) {
+                cred.model = provider.defaultModel
+                changed = true
+            }
+            if oldModels.contains(cred.meetingModel) {
+                cred.meetingModel = provider.defaultModel
+                changed = true
+            }
+            creds[provider.rawValue] = cred
+        }
+
+        update(provider: .deepseek, oldModels: ["deepseek-chat"])
+        update(provider: .openRouter, oldModels: ["google/gemini-2.0-flash-001"])
+        update(provider: .zhipu, oldModels: ["glm-4-flash"])
+        update(provider: .zai, oldModels: ["glm-5-turbo"])
+        update(provider: .doubao, oldModels: ["doubao-1-5-pro-32k-250115"])
+        update(provider: .kimi, oldBaseURL: "https://api.moonshot.cn/v1", oldModels: ["moonshot-v1-8k"])
+
+        return changed
     }
 
     private func migrateFromVoiceAura() {

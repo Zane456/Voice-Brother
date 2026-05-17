@@ -434,8 +434,8 @@ enum CloudASRProvider: String, CaseIterable, Identifiable, Codable {
     /// "暂未实现" at recording time.
     var isImplemented: Bool {
         switch self {
-        case .volcanoASR: return true
-        case .openaiWhisper, .deepgram: return false
+        case .openaiWhisper, .volcanoASR: return true
+        case .deepgram: return false
         }
     }
 }
@@ -483,7 +483,7 @@ enum LLMProvider: String, CaseIterable, Identifiable, Codable {
         // chat-completions 会报 1113 余额错误，所以这里固定 anthropic 路径。
         case .zai: return "https://api.z.ai/api/anthropic/v1"
         case .doubao: return "https://ark.cn-beijing.volces.com/api/v3"
-        case .kimi: return "https://api.moonshot.cn/v1"
+        case .kimi: return "https://api.moonshot.ai/v1"
         case .ollama: return "http://localhost:11434/v1"
         }
     }
@@ -493,15 +493,15 @@ enum LLMProvider: String, CaseIterable, Identifiable, Codable {
         case .none: return ""
         case .openai: return "gpt-4o-mini"
         case .claude: return "claude-sonnet-4-6"
-        case .deepseek: return "deepseek-chat"
-        case .openRouter: return "google/gemini-2.0-flash-001"
-        case .zhipu: return "glm-4-flash"
-        case .zai: return "glm-5-turbo"
+        case .deepseek: return "deepseek-v4-flash"
+        case .openRouter: return "google/gemini-2.5-flash"
+        case .zhipu: return "glm-5.1"
+        case .zai: return "glm-5.1"
         // 火山方舟的 model 字段要求连字符 + 日期后缀的官方 Model ID
         // （`doubao-1.5-pro-32k` 这种带点的写法会被拒）。日期版本会轮换，
         // 用户可在方舟控制台查最新 ID 或填私有接入点 ID（ep-…）。
-        case .doubao: return "doubao-1-5-pro-32k-250115"
-        case .kimi: return "moonshot-v1-8k"
+        case .doubao: return "doubao-seed-1-6-250615"
+        case .kimi: return "kimi-k2.6"
         case .ollama: return "qwen2.5:7b"
         }
     }
@@ -570,4 +570,3 @@ struct PromptPreset: Identifiable, Hashable {
                      isBuiltIn: true),
     ]
 }
-

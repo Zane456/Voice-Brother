@@ -13,7 +13,8 @@ struct LLMConfigCard: View {
     @State private var testState: TestState = .idle
 
     private enum TestState {
-        case idle, testing, success
+        case idle, testing
+        case success(String)
         case failure(String)
     }
 
@@ -173,8 +174,8 @@ struct LLMConfigCard: View {
         switch testState {
         case .idle, .testing:
             EmptyView()
-        case .success:
-            Label("连接成功", systemImage: "checkmark.circle.fill")
+        case .success(let msg):
+            Label(msg, systemImage: "checkmark.circle.fill")
                 .font(.system(size: 12))
                 .foregroundColor(theme.success)
         case .failure(let msg):
@@ -198,19 +199,46 @@ struct LLMConfigCard: View {
         }
         testState = .testing
         Task {
-            let client = LLMClient(provider: provider, credentials: creds,
-                                   userNotes: "", timeout: 20, maxTokens: 32)
-            do {
-                let reply = try await client.call(
-                    systemPrompt: "你是连接测试助手，收到消息后只回复 ok。",
-                    userMessage: "ping"
-                )
-                testState = reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? .failure("API 响应为空") : .success
-            } catch {
-                testState = .failure(Self.shortError(error))
+            let tests = Self.connectionTestTargets(provider: provider, credentials: creds)
+            for test in tests {
+                var testCreds = creds
+                testCreds.model = test.model
+                let client = LLMClient(provider: provider, credentials: testCreds,
+                                       userNotes: "", timeout: 20, maxTokens: 32)
+                let reply: String
+                do {
+                    reply = try await client.call(
+                        systemPrompt: "你是连接测试助手，收到消息后只回复 ok。",
+                        userMessage: "ping"
+                    )
+                } catch {
+                    testState = .failure("\(test.label)失败：\(Self.shortError(error))")
+                    return
+                }
+                if reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    testState = .failure("\(test.label) API 响应为空")
+                    return
+                }
             }
+            testState = .success(tests.count > 1 ? "语音 / 录音连接成功" : "连接成功")
         }
+    }
+
+    private static func connectionTestTargets(
+        provider: LLMProvider,
+        credentials: ProviderCredentials
+    ) -> [(label: String, model: String)] {
+        let voiceModel = credentials.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedVoiceModel = voiceModel.isEmpty ? provider.defaultModel : voiceModel
+        let meetingModel = credentials.meetingModel.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var targets: [(label: String, model: String)] = [
+            ("语音润色", resolvedVoiceModel)
+        ]
+        if !meetingModel.isEmpty, meetingModel != resolvedVoiceModel {
+            targets.append(("声音录制", meetingModel))
+        }
+        return targets
     }
 
     private static func shortError(_ error: Error) -> String {

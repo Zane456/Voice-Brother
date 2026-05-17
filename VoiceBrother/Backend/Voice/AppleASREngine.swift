@@ -239,4 +239,174 @@ private extension Data {
     mutating func append<T: FixedWidthInteger>(littleEndian value: T) {
         Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
     }
+
+    mutating func appendUTF8(_ string: String) {
+        append(contentsOf: string.utf8)
+    }
+}
+
+/// OpenAI Whisper cloud ASR wrapper. Unlike VolcanoASREngine, this is a batch
+/// upload path: record locally, encode a WAV, then POST multipart/form-data to
+/// `/audio/transcriptions`.
+final class OpenAIWhisperASREngine: ASREngineProtocol {
+    private let apiKey: String
+    private let baseURL: String
+    private let model: String
+    private let timeout: TimeInterval
+
+    init(apiKey: String, baseURL: String, model: String, timeout: TimeInterval = 45) {
+        self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.baseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.model = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.timeout = timeout
+    }
+
+    func transcribe(audio: [Float], sampleRate: Int, language: String?, context: String?) -> String {
+        guard !apiKey.isEmpty else {
+            NSLog("[OpenAIWhisperASR] Missing API key")
+            return ""
+        }
+        guard let url = URL(string: baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/audio/transcriptions") else {
+            NSLog("[OpenAIWhisperASR] Invalid Base URL: %@", baseURL)
+            return ""
+        }
+        guard let wavData = Self.makeWAVData(samples: audio, sampleRate: sampleRate), !wavData.isEmpty else {
+            NSLog("[OpenAIWhisperASR] Failed to encode WAV")
+            return ""
+        }
+
+        let boundary = "VoiceBrotherBoundary-\(UUID().uuidString)"
+        var fields: [String: String] = [
+            "model": model.isEmpty ? CloudASRProvider.openaiWhisper.defaultModel : model,
+            "response_format": "json",
+            "temperature": "0"
+        ]
+        if let languageCode = Self.openAILanguageCode(for: language) {
+            fields["language"] = languageCode
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeout
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Self.multipartBody(
+            fields: fields,
+            fileField: "file",
+            filename: "voice-brother.wav",
+            contentType: "audio/wav",
+            fileData: wavData,
+            boundary: boundary
+        )
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var resultText = ""
+        var requestError: String?
+
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            defer { semaphore.signal() }
+            if let error {
+                requestError = error.localizedDescription
+                return
+            }
+            guard let httpResponse = response as? HTTPURLResponse else {
+                requestError = "Invalid HTTP response"
+                return
+            }
+            guard let data else {
+                requestError = "Empty response body"
+                return
+            }
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let body = String(data: data, encoding: .utf8) ?? "Unknown error"
+                requestError = "HTTP \(httpResponse.statusCode): \(body)"
+                return
+            }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let text = json["text"] as? String else {
+                requestError = "Unable to parse transcription response"
+                return
+            }
+            resultText = text
+        }
+        task.resume()
+
+        if semaphore.wait(timeout: .now() + timeout + 5) == .timedOut {
+            task.cancel()
+            NSLog("[OpenAIWhisperASR] Request timed out")
+            return ""
+        }
+        if let requestError {
+            NSLog("[OpenAIWhisperASR] %@", requestError)
+        }
+        return resultText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func unload() {
+        // No persistent model state.
+    }
+
+    private static func openAILanguageCode(for language: String?) -> String? {
+        switch language {
+        case "Chinese": return "zh"
+        case "English": return "en"
+        case "Japanese": return "ja"
+        default: return nil
+        }
+    }
+
+    private static func multipartBody(
+        fields: [String: String],
+        fileField: String,
+        filename: String,
+        contentType: String,
+        fileData: Data,
+        boundary: String
+    ) -> Data {
+        var body = Data()
+        for (name, value) in fields {
+            body.appendUTF8("--\(boundary)\r\n")
+            body.appendUTF8("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
+            body.appendUTF8("\(value)\r\n")
+        }
+        body.appendUTF8("--\(boundary)\r\n")
+        body.appendUTF8("Content-Disposition: form-data; name=\"\(fileField)\"; filename=\"\(filename)\"\r\n")
+        body.appendUTF8("Content-Type: \(contentType)\r\n\r\n")
+        body.append(fileData)
+        body.appendUTF8("\r\n--\(boundary)--\r\n")
+        return body
+    }
+
+    private static func makeWAVData(samples: [Float], sampleRate: Int) -> Data? {
+        guard sampleRate > 0 else { return nil }
+
+        let numChannels: UInt16 = 1
+        let bitsPerSample: UInt16 = 16
+        let byteRate = UInt32(sampleRate) * UInt32(numChannels) * UInt32(bitsPerSample / 8)
+        let blockAlign = numChannels * (bitsPerSample / 8)
+        let dataSize = UInt32(samples.count * Int(bitsPerSample / 8))
+        let fileSize = 36 + dataSize
+
+        var data = Data()
+        data.reserveCapacity(44 + Int(dataSize))
+        data.appendUTF8("RIFF")
+        data.append(littleEndian: fileSize)
+        data.appendUTF8("WAVE")
+        data.appendUTF8("fmt ")
+        data.append(littleEndian: UInt32(16))
+        data.append(littleEndian: UInt16(1))
+        data.append(littleEndian: numChannels)
+        data.append(littleEndian: UInt32(sampleRate))
+        data.append(littleEndian: byteRate)
+        data.append(littleEndian: blockAlign)
+        data.append(littleEndian: bitsPerSample)
+        data.appendUTF8("data")
+        data.append(littleEndian: dataSize)
+
+        for sample in samples {
+            let clamped = max(-1.0, min(1.0, sample))
+            data.append(littleEndian: Int16(clamped * Float(Int16.max)))
+        }
+        return data
+    }
 }

@@ -432,6 +432,17 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         let creds = configManager.cloudASRCredentials[provider.rawValue] ?? ProviderCredentials()
 
         switch provider {
+        case .openaiWhisper:
+            guard !creds.apiKey.isEmpty else {
+                state = .error("请配置 OpenAI API Key")
+                return
+            }
+            self.asrEngine = OpenAIWhisperASREngine(
+                apiKey: creds.apiKey,
+                baseURL: creds.baseURL.isEmpty ? provider.defaultBaseURL : creds.baseURL,
+                model: creds.model.isEmpty ? provider.defaultModel : creds.model
+            )
+
         case .volcanoASR:
             guard !creds.apiKey.isEmpty, !creds.baseURL.isEmpty else {
                 state = .error("请配置 App ID 和 Access Token")
@@ -444,7 +455,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             )
             self.asrEngine = engine
 
-        case .openaiWhisper, .deepgram:
+        case .deepgram:
             state = .error("\(provider.displayName) 暂未实现")
             return
         }
@@ -1263,7 +1274,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         // user's chosen voice-input language. Qwen3-ASR is multilingual — keep
         // nil so it auto-detects (pinning a hint forced Japanese/English speech
         // into Mandarin homophone mode).
-        let asrLanguage: String? = (engine is AppleASREngine)
+        let asrLanguage: String? = (engine is AppleASREngine || engine is OpenAIWhisperASREngine)
             ? configManager.voiceInputLanguage.asrLanguageHint
             : nil
 
