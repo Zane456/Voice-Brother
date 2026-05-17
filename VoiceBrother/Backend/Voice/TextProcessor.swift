@@ -38,19 +38,31 @@ enum TextProcessor {
         FillerRemover.process(text)
     }
 
-    /// Cap consecutive runs of identical sentences and identical single
+    /// Cap repeated substrings, repeated sentences and identical single
     /// characters that the ASR sometimes loops on when fed long silences or
     /// monotone audio. Language-agnostic — operates on Unicode characters and
     /// generic punctuation, so it works for Chinese, Japanese and English.
     ///
+    /// - Short repeated substrings (1–12 chars): if the same unit repeats 3+
+    ///   times in a row, keep one copy.
     /// - Sentences (split on .。!！?？;； and newline): if the same sentence
     ///   repeats ≥ 3 times in a row, keep at most 2 copies.
     /// - Single-character runs (length-1 graphemes): if the same character
     ///   repeats ≥ 5 times in a row, collapse to 3 copies (preserves the
     ///   "我我我" emphasis pattern but kills "我我我我我我…我").
     static func collapseRepeats(in text: String) -> String {
-        let charCollapsed = collapseSingleCharRuns(text)
+        let loopCollapsed = collapseRepeatedSubstrings(text)
+        let charCollapsed = collapseSingleCharRuns(loopCollapsed)
         return collapseSentenceRuns(charCollapsed)
+    }
+
+    private static func collapseRepeatedSubstrings(_ text: String) -> String {
+        let pattern = #"(.{1,12}?)\1{2,}"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return text
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: "$1")
     }
 
     private static func collapseSingleCharRuns(_ text: String) -> String {

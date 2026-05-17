@@ -92,6 +92,7 @@ enum MeetingRetranscriber {
             // in a 1.7B run). Explicit pool keeps memory flat.
             try autoreleasepool { () throws -> Void in
                 let windowEnd = min(cursor + forceCutSamples, samples.count)
+                let reachedEnd = windowEnd >= samples.count
                 let windowLen = windowEnd - cursor
                 let windowStartSec = Double(cursor) / Double(sampleRate)
 
@@ -108,12 +109,13 @@ enum MeetingRetranscriber {
                 }
 
                 let segment = Array(samples[cursor..<(cursor + cutInWindow)])
+                let compactedSegment = compactSilences(in: segment, vad: vad)
                 let segDurationSec = Double(segment.count) / Double(sampleRate)
 
                 // Transcribe (synchronous; Qwen3ASRModel is not thread-safe so we
                 // serialise here on purpose).
                 let raw = asrModel.transcribe(
-                    audio: segment,
+                    audio: compactedSegment,
                     sampleRate: sampleRate,
                     language: options.language,
                     context: nil
@@ -122,16 +124,23 @@ enum MeetingRetranscriber {
                 // doesn't accumulate dozens of GB of cached buffers.
                 MLXMemoryGovernor.reclaim()
                 let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    segments.append((startSec: windowStartSec, text: trimmed))
-                    let preview = String(trimmed.prefix(40)).replacingOccurrences(of: "\n", with: " ")
+                let processed = TextProcessor.collapseRepeats(in: trimmed)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !processed.isEmpty {
+                    segments.append((startSec: windowStartSec, text: processed))
+                    let preview = String(processed.prefix(40)).replacingOccurrences(of: "\n", with: " ")
                     print(String(format: "%@   %@ (%.1fs) %@", logPrefix, formatHMS(windowStartSec), segDurationSec, preview))
                 } else {
                     print(String(format: "%@   %@ (%.1fs) <empty>", logPrefix, formatHMS(windowStartSec), segDurationSec))
                 }
                 fflush(stdout)
 
-                let advance = max(1, cutInWindow - overlapSamples)
+                // Do not preserve overlap at EOF, or the last short tail can
+                // be reprocessed thousands of times one sample at a time. For
+                // very short non-final cuts, cap overlap to half the segment
+                // so forward progress stays meaningful.
+                let effectiveOverlap = reachedEnd ? 0 : min(overlapSamples, max(0, cutInWindow / 2))
+                let advance = max(1, cutInWindow - effectiveOverlap)
                 cursor += advance
 
                 segmentsSinceFlush += 1
@@ -243,6 +252,36 @@ enum MeetingRetranscriber {
             }
         }
         return nil
+    }
+
+    /// Match MeetingService's live path: drop long internal silences before
+    /// feeding a segment to Qwen3-ASR. This reduces token-loop sampling and
+    /// keeps short tail speech attached to the preceding utterance.
+    private static func compactSilences(in audio: [Float], vad: SileroVADModel) -> [Float] {
+        let segments = vad.detectSpeech(audio: audio, sampleRate: sampleRate)
+        guard !segments.isEmpty else { return audio }
+
+        let speechDuration = segments.reduce(0.0) { $0 + Double($1.endTime - $1.startTime) }
+        let totalDuration = Double(audio.count) / Double(sampleRate)
+        if totalDuration > 0, speechDuration / totalDuration > 0.7 { return audio }
+
+        let padSamples = Int(0.2 * Double(sampleRate))
+        let pad = [Float](repeating: 0, count: padSamples)
+        let leadIn = Int(0.1 * Double(sampleRate))
+
+        var out: [Float] = []
+        out.reserveCapacity(Int(speechDuration * Double(sampleRate)) + padSamples * segments.count)
+        for (i, seg) in segments.enumerated() {
+            let startIdx = max(0, Int(Double(seg.startTime) * Double(sampleRate)) - leadIn)
+            let endIdx = min(audio.count, Int(Double(seg.endTime) * Double(sampleRate)) + leadIn)
+            if endIdx > startIdx {
+                out.append(contentsOf: audio[startIdx..<endIdx])
+            }
+            if i < segments.count - 1 {
+                out.append(contentsOf: pad)
+            }
+        }
+        return out.isEmpty ? audio : out
     }
 
     // MARK: - Markdown
