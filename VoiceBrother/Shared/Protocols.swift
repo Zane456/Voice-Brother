@@ -50,9 +50,9 @@ protocol ConfigManagerProtocol: ObservableObject {
     // Meeting ASR — shares engine with voice input (configManager.model).
     // No separate meeting ASR config; the meeting LLM (summary) is independent below.
 
-    // Meeting LLM — provider shared with voice (`llmProvider`); the
-    // meeting-specific model lives in `ProviderCredentials.meetingModel`.
-    var meetingLLMCredentials: [String: ProviderCredentials] { get set }
+    // Meeting LLM — provider and credentials shared with voice
+    // (`llmProvider` / `llmCredentials`); the meeting-specific model lives in
+    // `ProviderCredentials.meetingModel`.
     var meetingLLMEnabled: Bool { get set }
 
     // Prompt presets

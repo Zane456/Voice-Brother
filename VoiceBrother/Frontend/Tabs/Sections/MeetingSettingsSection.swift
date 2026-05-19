@@ -15,7 +15,6 @@ struct MeetingSettingsSection: View {
             // Meeting LLM Config
             meetingLLMView
         }
-        .onAppear { migrateMeetingCredentialsIfNeeded() }
     }
 
     private func provenanceBadge(isCloud: Bool) -> some View {
@@ -164,24 +163,5 @@ struct MeetingSettingsSection: View {
         .padding(.vertical, 3)
         .background(theme.tagBackground.opacity(0.8))
         .cornerRadius(6)
-    }
-
-    /// One-time migration: copy any provider creds from the legacy
-    /// `meetingLLMCredentials` storage into the shared `llmCredentials`,
-    /// only when the shared dict has no entry for that provider yet.
-    private func migrateMeetingCredentialsIfNeeded() {
-        guard !configManager.meetingLLMCredentials.isEmpty else { return }
-        var shared = configManager.llmCredentials
-        var changed = false
-        for (provider, creds) in configManager.meetingLLMCredentials {
-            if shared[provider] == nil
-                && (!creds.apiKey.isEmpty || !creds.baseURL.isEmpty || !creds.model.isEmpty) {
-                shared[provider] = creds
-                changed = true
-            }
-        }
-        if changed {
-            configManager.llmCredentials = shared
-        }
     }
 }

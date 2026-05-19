@@ -126,10 +126,6 @@ final class ConfigManager: ObservableObject, ConfigManagerProtocol {
 
     // MARK: - Meeting LLM
 
-    var meetingLLMCredentials: [String: ProviderCredentials] {
-        get { appConfig.meetingLLMCredentials }
-        set { appConfig.meetingLLMCredentials = newValue }
-    }
     var meetingLLMEnabled: Bool {
         get { appConfig.meetingLLMEnabled }
         set { appConfig.meetingLLMEnabled = newValue }

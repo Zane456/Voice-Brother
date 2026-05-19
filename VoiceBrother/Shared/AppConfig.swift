@@ -104,13 +104,11 @@ final class AppConfig: ObservableObject {
 
     // MARK: - Meeting LLM
     //
-    // Meeting shares the voice LLM provider (`llmProvider`) — there is no
-    // separate meeting provider. The meeting-specific model is stored per
-    // provider in `ProviderCredentials.meetingModel`.
+    // Meeting shares the voice LLM provider (`llmProvider`) and credentials
+    // (`llmCredentials`) — there is no separate meeting provider. The
+    // meeting-specific model is stored per provider in
+    // `ProviderCredentials.meetingModel`.
 
-    @Published var meetingLLMCredentials: [String: ProviderCredentials] {
-        didSet { scheduleSave() }
-    }
     @Published var meetingLLMEnabled: Bool {
         didSet { scheduleSave() }
     }
@@ -192,7 +190,6 @@ final class AppConfig: ObservableObject {
     static let defaultMeetingASRModel = ASRModel.small.rawValue
 
     // Meeting LLM defaults
-    static let defaultMeetingLLMCredentials: [String: ProviderCredentials] = [:]
     static let defaultMeetingLLMEnabled = false
     static let defaultMeetingLanguage = MeetingLanguage.auto.rawValue
     static let defaultVoiceInputLanguage = VoiceInputLanguage.chinese.rawValue
@@ -250,12 +247,11 @@ final class AppConfig: ObservableObject {
         self.polishCustomPresets = Self.loadDict("polishCustomPresets", default: Self.defaultPolishCustomPresets)
 
         // Load complex types from JSON
-        let (hotwords, replacements, cloudASRCreds, llmCreds, meetingLLMCreds, keychainMigrated) = Self.loadComplexTypes()
+        let (hotwords, replacements, cloudASRCreds, llmCreds, keychainMigrated) = Self.loadComplexTypes()
         self.hotwords = hotwords
         self.replacements = replacements
         self.cloudASRCredentials = cloudASRCreds
         self.llmCredentials = llmCreds
-        self.meetingLLMCredentials = meetingLLMCreds
 
         // Migrate from Voice Aura on first launch
         if !migratedFromVoiceAura {
@@ -358,9 +354,6 @@ final class AppConfig: ObservableObject {
         }
         if let llmCredsData = try? JSONEncoder().encode(Self.scrubKeysForDisk(llmCredentials, bucket: "llm")) {
             defaults.set(llmCredsData, forKey: "llmCredentials")
-        }
-        if let meetingLLMCredsData = try? JSONEncoder().encode(Self.scrubKeysForDisk(meetingLLMCredentials, bucket: "meetingLLM")) {
-            defaults.set(meetingLLMCredsData, forKey: "meetingLLMCredentials")
         }
 
         // Prompt presets
@@ -475,7 +468,7 @@ final class AppConfig: ObservableObject {
         return migrated
     }
 
-    private static func loadComplexTypes() -> ([String], [ReplacementRule], [String: ProviderCredentials], [String: ProviderCredentials], [String: ProviderCredentials], Bool) {
+    private static func loadComplexTypes() -> ([String], [ReplacementRule], [String: ProviderCredentials], [String: ProviderCredentials], Bool) {
         let defaults = UserDefaults.standard
 
         // Hotwords
@@ -496,15 +489,47 @@ final class AppConfig: ObservableObject {
             data: defaults.data(forKey: "llmCredentials"), default: defaultLLMCredentials)
         migrated = hydrateKeysFromKeychain(&llmCreds, bucket: "llm") || migrated
         migrated = migrateLegacyLLMDefaults(&llmCreds) || migrated
+        migrated = migrateLegacyMeetingStorage(into: &llmCreds) || migrated
 
         // (Meeting Cloud ASR creds removed — meetings share the voice input engine.)
 
-        // Meeting LLM Credentials
-        var meetingLLMCreds = decodeOrDefault([String: ProviderCredentials].self, key: "meetingLLMCredentials",
-            data: defaults.data(forKey: "meetingLLMCredentials"), default: defaultMeetingLLMCredentials)
-        migrated = hydrateKeysFromKeychain(&meetingLLMCreds, bucket: "meetingLLM") || migrated
+        return (hotwords, replacements, cloudASRCreds, llmCreds, migrated)
+    }
 
-        return (hotwords, replacements, cloudASRCreds, llmCreds, meetingLLMCreds, migrated)
+    /// One-shot cleanup of storage left behind by retired features:
+    ///
+    /// 1. Older builds kept meeting LLM credentials in a separate
+    ///    `meetingLLMCredentials` key. Fold any provider not already present
+    ///    in the shared `llmCredentials` map into it, then delete the key —
+    ///    meetings now share `llmCredentials` and only diverge on
+    ///    `ProviderCredentials.meetingModel`.
+    /// 2. `meetingLLMProvider`, the top-level `meetingModel`, and `polishModel`
+    ///    are orphaned keys that no code reads. Drop them so the persisted
+    ///    config matches the current schema.
+    ///
+    /// Every removal is idempotent: once the keys are gone this is a no-op.
+    @discardableResult
+    private static func migrateLegacyMeetingStorage(into shared: inout [String: ProviderCredentials]) -> Bool {
+        let defaults = UserDefaults.standard
+
+        for orphan in ["meetingLLMProvider", "meetingModel", "polishModel"] {
+            defaults.removeObject(forKey: orphan)
+        }
+
+        guard let data = defaults.data(forKey: "meetingLLMCredentials"),
+              var legacy = try? JSONDecoder().decode([String: ProviderCredentials].self, from: data)
+        else { return false }
+
+        _ = hydrateKeysFromKeychain(&legacy, bucket: "meetingLLM")
+        var changed = false
+        for (provider, creds) in legacy where shared[provider] == nil {
+            if !creds.apiKey.isEmpty || !creds.baseURL.isEmpty || !creds.model.isEmpty {
+                shared[provider] = creds
+                changed = true
+            }
+        }
+        defaults.removeObject(forKey: "meetingLLMCredentials")
+        return changed
     }
 
     /// Refresh stored values that exactly match old app defaults. User-entered
