@@ -6,7 +6,7 @@ import SwiftUI
 /// Icon reflects voiceService + meetingService state at a glance.
 /// Menu provides quick actions: 启动/停止语音、开始/结束会议、显示主窗口、退出。
 @MainActor
-final class MenuBarController: NSObject {
+final class MenuBarController: NSObject, NSMenuDelegate {
 
     private let voiceService: VoiceService
     private let meetingService: MeetingService
@@ -15,6 +15,13 @@ final class MenuBarController: NSObject {
     private var statusItem: NSStatusItem!
     private var cancellables = Set<AnyCancellable>()
     private var meetingTimer: Timer?
+
+    /// True while the dropdown is on screen. We never swap `statusItem.menu`
+    /// for a freshly built NSMenu while it's open — that would dismiss it.
+    /// State changes during this window only refresh the icon; the menu is
+    /// rebuilt once on `menuDidClose`. The two AI-大模型 rows still update
+    /// live because their SwiftUI views observe `configManager` directly.
+    private var menuIsOpen = false
 
     init(voiceService: VoiceService, meetingService: MeetingService, configManager: ConfigManager) {
         self.voiceService = voiceService
@@ -107,6 +114,19 @@ final class MenuBarController: NSObject {
             button.imagePosition = .imageOnly
             statusItem.length = Self.iconOnlyLength
         }
+        // Don't rebuild while the menu is open — see `menuIsOpen`.
+        if !menuIsOpen { rebuildMenu() }
+    }
+
+    // MARK: - NSMenuDelegate
+
+    func menuWillOpen(_ menu: NSMenu) {
+        menuIsOpen = true
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        menuIsOpen = false
+        // Catch up on any state that changed while the menu was open.
         rebuildMenu()
     }
 
@@ -132,6 +152,7 @@ final class MenuBarController: NSObject {
 
     private func rebuildMenu() {
         let menu = NSMenu()
+        menu.delegate = self
 
         // Status header — a custom view-based item: brand mark, app name, a
         // live status line, and an SF Symbol provenance chip. Disabled so it
@@ -179,6 +200,33 @@ final class MenuBarController: NSObject {
         if case .finishing = meetingService.state { meetingItem.isEnabled = false }
         if case .summarizing = meetingService.state { meetingItem.isEnabled = false }
         menu.addItem(meetingItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // AI 大模型 toggles — mirror the in-app "AI 大模型（文本优化）" and
+        // "AI 大模型（内容处理）" cards so both cloud-LLM switches are reachable
+        // without opening the settings window. View-based items: the whole row
+        // is the hit target; the SwiftUI view observes `configManager`, so the
+        // switch animates in place and the menu stays open after a toggle.
+        let voiceLLMItem = NSMenuItem()
+        voiceLLMItem.view = MenuLLMItemView(
+            configManager: configManager,
+            keyPath: \.cloudLLMEnabled,
+            icon: "brain",
+            title: "AI 大模型 · 文本优化",
+            width: Self.headerWidth
+        )
+        menu.addItem(voiceLLMItem)
+
+        let meetingLLMItem = NSMenuItem()
+        meetingLLMItem.view = MenuLLMItemView(
+            configManager: configManager,
+            keyPath: \.meetingLLMEnabled,
+            icon: "brain",
+            title: "AI 大模型 · 内容处理",
+            width: Self.headerWidth
+        )
+        menu.addItem(meetingLLMItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -339,5 +387,145 @@ private struct MenuBarHeaderView: View {
         case .downloading, .loading:             return .secondary
         case .stopped, .error:                   return Color.secondary.opacity(0.55)
         }
+    }
+}
+
+// MARK: - AI 大模型 Toggle Row
+
+/// Shared hover flag — the hosting NSView updates it from tracking-area
+/// callbacks, the SwiftUI row observes it to draw a highlight.
+private final class MenuRowHoverState: ObservableObject {
+    @Published var isHovered = false
+}
+
+/// A toggle-style row for the menu-bar dropdown that mirrors the in-app
+/// "AI 大模型" cards: SF Symbol, title, a coloured status dot + label, and a
+/// switch on the trailing edge. The row observes `configManager`, so the
+/// switch slides the instant the flag flips — the menu stays open after a tap
+/// and the toggle is visibly acknowledged. Uses semantic colours + the fixed
+/// brand blue (never `ThemeManager`) because the menu always renders in the
+/// system appearance.
+private struct MenuLLMRow: View {
+
+    @ObservedObject var configManager: ConfigManager
+    @ObservedObject var hover: MenuRowHoverState
+    let icon: String
+    let title: String
+    let keyPath: ReferenceWritableKeyPath<ConfigManager, Bool>
+    let width: CGFloat
+
+    private let brandBlue = Color(red: 0x33 / 255, green: 0x9C / 255, blue: 0xFF / 255)
+
+    private var isOn: Bool { configManager[keyPath: keyPath] }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(isOn ? brandBlue : Color.secondary)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.primary)
+
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(isOn ? brandBlue : Color.secondary.opacity(0.5))
+                        .frame(width: 6, height: 6)
+                    Text(isOn ? "已启用" : "未启用")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            switchView
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .frame(width: width, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(hover.isHovered ? Color.primary.opacity(0.09) : Color.clear)
+                .padding(.horizontal, 6)
+        )
+        .contentShape(Rectangle())
+        .animation(.easeOut(duration: 0.18), value: isOn)
+    }
+
+    /// Mini capsule switch — knob slides to the trailing edge when on.
+    private var switchView: some View {
+        Capsule()
+            .fill(isOn ? brandBlue : Color.primary.opacity(0.18))
+            .frame(width: 32, height: 18)
+            .overlay(alignment: isOn ? .trailing : .leading) {
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 14, height: 14)
+                    .padding(2)
+                    .shadow(color: .black.opacity(0.18), radius: 1, y: 0.5)
+            }
+    }
+}
+
+/// Hosts a `MenuLLMRow` inside an NSMenu item: tracks the pointer for a hover
+/// highlight and turns a click anywhere on the row into a toggle of the
+/// `configManager` flag. The menu intentionally stays open afterwards — the
+/// row observes `configManager`, so the switch animates in place and the user
+/// sees the toggle land instead of the menu just vanishing.
+private final class MenuLLMItemView: NSView {
+
+    private let configManager: ConfigManager
+    private let keyPath: ReferenceWritableKeyPath<ConfigManager, Bool>
+    private let hoverState = MenuRowHoverState()
+    private var trackingArea: NSTrackingArea?
+
+    init(configManager: ConfigManager,
+         keyPath: ReferenceWritableKeyPath<ConfigManager, Bool>,
+         icon: String, title: String, width: CGFloat) {
+        self.configManager = configManager
+        self.keyPath = keyPath
+        super.init(frame: .zero)
+
+        let row = MenuLLMRow(configManager: configManager, hover: hoverState,
+                             icon: icon, title: title, keyPath: keyPath, width: width)
+        let hosting = NSHostingView(rootView: row)
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(hosting)
+        NSLayoutConstraint.activate([
+            hosting.topAnchor.constraint(equalTo: topAnchor),
+            hosting.bottomAnchor.constraint(equalTo: bottomAnchor),
+            hosting.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hosting.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+
+        let fitHeight = hosting.fittingSize.height
+        frame = NSRect(origin: .zero,
+                       size: CGSize(width: width, height: fitHeight > 0 ? fitHeight : 44))
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(rect: bounds,
+                                  options: [.mouseEnteredAndExited, .activeAlways],
+                                  owner: self)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { hoverState.isHovered = true }
+    override func mouseExited(with event: NSEvent) { hoverState.isHovered = false }
+
+    override func mouseUp(with event: NSEvent) {
+        // Toggle in place; do NOT dismiss the menu. The row observes
+        // `configManager`, so the switch animates and the toggle lands
+        // visibly. Closing here gave no feedback and felt like a no-op.
+        configManager[keyPath: keyPath].toggle()
     }
 }
