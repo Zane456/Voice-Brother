@@ -77,6 +77,14 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
     private var elapsedTimer: Timer?
     private var recordingTask: Task<Void, Never>?
     private var pendingTranscriptionTask: Task<Void, Never>?
+    /// Watchdog that force-fails a meeting stranded in `.preparing` by a hung
+    /// model load (e.g. a HuggingFace snapshot that never returns).
+    private var loadWatchdog: Task<Void, Never>?
+    /// Bumped on every `start()` and on every `.preparing`-state stop. The
+    /// startup task checks it before mutating shared state, so a model load
+    /// that hangs and only returns much later cannot clobber a meeting the
+    /// user has since cancelled or restarted.
+    private var startGeneration = 0
     /// Counts non-empty transcription segments written to the markdown file.
     /// Used to skip saving + summarising when a meeting captured no speech
     /// (e.g. user toggled recording then walked away from the mic).
@@ -164,6 +172,20 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         // show the preparing state so the UI isn't unresponsive meanwhile.
         state = .preparing
 
+        // Show the overlay the instant the gesture completes — before the
+        // model load — so the user gets immediate feedback. It pulses in a
+        // "loading" state and switches to the live waveform once recording
+        // actually starts. Without this the bubble only appeared after the
+        // multi-second model load, making the gesture feel unresponsive.
+        RecordingOverlayPanel.shared.show(mode: .meeting, preparing: true)
+
+        // New meeting attempt — bump the generation token. The startup task
+        // and the watchdog both capture `gen` and check it before mutating
+        // shared state, so a hung load that returns late can't clobber a
+        // meeting the user has since cancelled or restarted.
+        startGeneration &+= 1
+        let gen = startGeneration
+
         // Suppress single-key voice input for the whole meeting lifecycle —
         // avoids microphone contention and prevents a second ASR model from
         // being loaded while the meeting's own model is resident.
@@ -172,12 +194,45 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         // mic. The meeting uses its own VPIO-enabled engine below.
         voiceService?.releaseAudioEngineForMeeting()
 
+        // Watchdog: a hung HuggingFace snapshot or MLX contention can leave
+        // the model load never returning, stranding the meeting in .preparing
+        // forever (cancel() is a no-op — a hung load reaches no cancellation
+        // checkpoint). Poll every 15s; if we're still .preparing with no
+        // forward download progress for ~45s, force-fail to .error, which
+        // toggle() can recover from. A genuinely-slow first download keeps
+        // `prepareProgress` climbing, so it never trips this.
+        loadWatchdog?.cancel()
+        loadWatchdog = Task { @MainActor [weak self] in
+            var lastProgress: Double = -1
+            var stalledPolls = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
+                guard let self, !Task.isCancelled,
+                      self.startGeneration == gen, self.state == .preparing else { return }
+                let p = self.prepareProgress ?? 0
+                if p > lastProgress { lastProgress = p; stalledPolls = 0 }
+                else { stalledPolls += 1 }
+                if stalledPolls >= 3 {
+                    DebugLog.write("[MeetingService] Model-load watchdog: no progress ~45s — forcing .error")
+                    self.startGeneration &+= 1   // orphan the stuck startup task
+                    self.recordingTask?.cancel()
+                    self.recordingTask = nil
+                    self.voiceService?.keyboardListenerRef?.isMeetingActive = false
+                    self.prepareProgress = nil
+                    RecordingOverlayPanel.shared.hide()
+                    self.state = .error("模型加载卡住，请重试")
+                    return
+                }
+            }
+        }
+
         recordingTask = Task { @MainActor in
             do {
                 // Load the meeting's own Qwen engine. Unlike before — when the
                 // meeting borrowed VoiceService's engine — this instance is
                 // owned by the meeting and unloaded at finalize, so it costs
                 // no memory between meetings.
+                DebugLog.write("[MeetingService] start(): loading Qwen model \(meetingModel.huggingFaceId)")
                 let qwenModel = try await Qwen3ASRModel.fromPretrained(
                     modelId: meetingModel.huggingFaceId,
                     progressHandler: { [weak self] progress, _ in
@@ -185,28 +240,36 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                     }
                 )
 
-                guard !Task.isCancelled else {
+                // Orphan check: stop() / the watchdog bumps `startGeneration`
+                // to disown a stuck load. Free the model we just got and exit
+                // WITHOUT touching shared state — that recovery path already
+                // reset everything (and may belong to a newer meeting now).
+                guard self.startGeneration == gen else {
+                    DebugLog.write("[MeetingService] startup task orphaned after Qwen load — discarding model")
                     qwenModel.unload()
-                    self.voiceService?.keyboardListenerRef?.isMeetingActive = false
-                    self.prepareProgress = nil
-                    self.state = .idle
                     return
                 }
-                self.asrEngine = QwenASREngine(model: qwenModel)
+                DebugLog.write("[MeetingService] Qwen model loaded — loading VAD")
+                // Hold the engine locally until we've confirmed still-owner —
+                // assigning self.asrEngine early would clobber a newer meeting.
+                let engine = QwenASREngine(model: qwenModel)
 
                 // Load VAD model (small, loads quickly)
                 let vad = try await SileroVADModel.fromPretrained(engine: .coreml)
-                self.vadModel = vad
 
-                guard !Task.isCancelled else {
-                    self.asrEngine?.unload()
-                    self.asrEngine = nil
-                    self.vadModel = nil
-                    self.voiceService?.keyboardListenerRef?.isMeetingActive = false
-                    self.prepareProgress = nil
-                    self.state = .idle
+                guard self.startGeneration == gen else {
+                    DebugLog.write("[MeetingService] startup task orphaned after VAD load — discarding models")
+                    engine.unload()
                     return
                 }
+                DebugLog.write("[MeetingService] VAD loaded — entering .recording")
+
+                // Confirmed still-owner — commit to shared state and stand the
+                // watchdog down (the load completed, nothing to guard).
+                self.loadWatchdog?.cancel()
+                self.loadWatchdog = nil
+                self.asrEngine = engine
+                self.vadModel = vad
 
                 // Model ready — transition to recording. The elapsed timer and
                 // the red-REC overlay only start now, so the model-load delay
@@ -216,7 +279,9 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 self.elapsedSeconds = 0
                 self.state = .recording
                 self.startElapsedTimer()
-                RecordingOverlayPanel.shared.show(mode: .meeting)
+                // Overlay is already on screen (shown in .preparing) — just
+                // switch its waveform from the loading pulse to live audio.
+                RecordingOverlayPanel.shared.beginRecording()
 
                 // Initialize markdown file
                 self.initMarkdown()
@@ -225,6 +290,15 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 try await self.runRecording()
 
             } catch {
+                // If the watchdog / a stop() already recovered this meeting,
+                // don't touch state — the error belongs to a disowned task.
+                guard self.startGeneration == gen else {
+                    DebugLog.write("[MeetingService] orphaned startup task error: \(error)")
+                    return
+                }
+                self.loadWatchdog?.cancel()
+                self.loadWatchdog = nil
+                RecordingOverlayPanel.shared.hide()
                 self.state = .error("录制失败: \(error.localizedDescription)")
                 await self.cleanup()
             }
@@ -234,10 +308,23 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
     func stop() {
         switch state {
         case .preparing:
-            // Model is still loading — cancel the startup task. Its own
-            // `Task.isCancelled` checks unload the partially-loaded model,
-            // re-enable voice input, and reset state back to .idle.
+            // Model is still loading. cancel() alone is unreliable — a hung
+            // HuggingFace snapshot / MLX load never reaches a cancellation
+            // checkpoint, so the meeting would stay stranded in .preparing
+            // forever and every later double-Command would be swallowed.
+            // Instead: bump the generation token (orphans the startup task —
+            // it discards whatever it eventually loads instead of mutating
+            // state) and force state straight back to .idle. The gesture is
+            // now always recoverable, even from a fully hung load.
+            startGeneration &+= 1
+            loadWatchdog?.cancel()
+            loadWatchdog = nil
             recordingTask?.cancel()
+            recordingTask = nil
+            voiceService?.keyboardListenerRef?.isMeetingActive = false
+            prepareProgress = nil
+            RecordingOverlayPanel.shared.hide()
+            state = .idle
         case .recording:
             state = .finishing
             // Expose the in-progress markdown file so the History tab can
@@ -531,16 +618,6 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         // Start microphone capture.
         let micEngine = AVAudioEngine()
         let inputNode = micEngine.inputNode
-
-        // 与 VoiceService 一致：开 Voice Processing 拿 AGC，把偏小的内置麦克风
-        // 电平自动放大到可用电平。必须在读 outputFormat / installTap / start 之前。
-        do {
-            try inputNode.setVoiceProcessingEnabled(true)
-            DebugLog.write("[MeetingService] Voice processing (AGC) enabled on mic input node")
-        } catch {
-            DebugLog.write("[MeetingService] setVoiceProcessingEnabled failed: \(error.localizedDescription) — falling back to raw input")
-        }
-
         let micFormat = inputNode.outputFormat(forBus: 0)
         let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -549,8 +626,9 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
             interleaved: false
         )!
 
-        // VP 的输入是多通道且无标准 channel layout，AVAudioConverter 无法降混
-        // （会输出全 0）。转换器只做采样率转换，降混在 tap 里手动取 ch0。
+        // 某些场景（如微信通话）系统会把输入切到 VPIO 多通道模式，这种格式无标准
+        // channel layout，AVAudioConverter 无法降混（会输出全 0）。转换器只做采样率
+        // 转换，降混在 tap 里手动取 ch0。麦克风增益由下游 mixAudio 的 RMS 归一化处理。
         let micMonoFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: micFormat.sampleRate,
@@ -805,27 +883,37 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         asrEngine = nil
         vadModel = nil
 
-        // Auto-summarize if meeting LLM is configured and enabled — but only
-        // when there's actual content to summarise.
+        // Recording + file finalization are done. Re-enable voice input and
+        // return to .idle NOW so the user can start the next meeting the
+        // instant they want — LLM summarization is a slow network call and
+        // must not sit on the critical path between meetings (a double-Command
+        // during summarization used to be silently swallowed).
+        voiceService?.keyboardListenerRef?.isMeetingActive = false
+        state = .idle
+
+        // Auto-summarize in a detached background task. `processingMarkdownPath`
+        // stays set so the History tab keeps the "生成中" badge on this file
+        // until the summary lands; the detached task clears it when done —
+        // but only if a newer meeting hasn't since claimed the badge.
         if !isEmptyMeeting, configManager.meetingLLMEnabled,
            let path = markdownFilePath {
-            state = .summarizing
-            summaryError = nil
-            do {
-                try await summarizer.summarize(transcriptPath: path)
-                NotificationCenter.default.post(name: .meetingFilesDidChange, object: nil)
-            } catch {
-                summaryError = error.localizedDescription
-                print("[MeetingService] Summarization failed: \(error)")
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.summaryError = nil
+                do {
+                    try await self.summarizer.summarize(transcriptPath: path)
+                    NotificationCenter.default.post(name: .meetingFilesDidChange, object: nil)
+                } catch {
+                    self.summaryError = error.localizedDescription
+                    print("[MeetingService] Summarization failed: \(error)")
+                }
+                if self.processingMarkdownPath == path {
+                    self.processingMarkdownPath = nil
+                }
             }
+        } else {
+            processingMarkdownPath = nil
         }
-
-        // Re-enable single-key voice input now that finalization is complete
-        voiceService?.keyboardListenerRef?.isMeetingActive = false
-
-        // Update state
-        processingMarkdownPath = nil
-        state = .idle
     }
 
     // MARK: - Audio Mixing (vDSP-optimized, minimal allocations)

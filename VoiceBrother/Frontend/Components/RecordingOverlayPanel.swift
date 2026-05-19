@@ -16,6 +16,10 @@ class StreamingTextState: ObservableObject {
     @Published var maxTextWidth: CGFloat = 300
     @Published var mode: OverlayMode = .voice
     @Published var meetingElapsed: Int = 0  // seconds, for REC label
+    /// True while a meeting's ASR model is still loading. Drives a pulsing
+    /// "loading" waveform so the overlay reads as alive — not frozen —
+    /// during the model-load wait that precedes actual recording.
+    @Published var isPreparing: Bool = false
 
     // Audio-driven waveform state
     @Published var audioLevel: CGFloat = 0
@@ -48,6 +52,7 @@ class StreamingTextState: ObservableObject {
         text = ""
         audioLevel = 0
         barHeights = Array(repeating: Self.minBarFraction, count: 5)
+        isPreparing = false
     }
 
 }
@@ -244,7 +249,7 @@ final class RecordingOverlayPanel: NSPanel {
 
     // MARK: Public API
 
-    func show(mode: OverlayMode = .voice) {
+    func show(mode: OverlayMode = .voice, preparing: Bool = false) {
         showToken &+= 1
 
         // Recording overlay shows only the waveform — no live transcript.
@@ -252,6 +257,8 @@ final class RecordingOverlayPanel: NSPanel {
         streamingState.mode = mode
         streamingState.meetingElapsed = 0
         streamingState.reset()
+        // Set after reset() — reset() clears isPreparing back to false.
+        streamingState.isPreparing = preparing
         // Always start at compact circular size — meeting mode no longer
         // shows REC + time inline (the menu bar carries that), so we can
         // keep the floating bubble as a single 44×44 circle in both modes.
@@ -274,6 +281,13 @@ final class RecordingOverlayPanel: NSPanel {
             self.animator().alphaValue = 1.0
             self.animator().setFrameOrigin(finalOrigin)
         }
+    }
+
+    /// Transition an already-visible preparing overlay into the live
+    /// recording state. No re-entry animation — the bubble is already on
+    /// screen; only the waveform switches from "loading pulse" to live audio.
+    func beginRecording() {
+        streamingState.isPreparing = false
     }
 
     /// Last brief message + when it was shown. Used to suppress repeat toasts

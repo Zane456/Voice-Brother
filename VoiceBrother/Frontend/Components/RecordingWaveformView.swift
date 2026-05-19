@@ -22,6 +22,14 @@ struct RecordingWaveformView: View {
             HStack(spacing: barSpacing) {
                 ForEach(0..<barCount, id: \.self) { index in
                     let barHeight: CGFloat = {
+                        // Loading pulse — all 5 bars breathe together while the
+                        // meeting's ASR model loads, so the overlay reads as
+                        // "working" instead of a frozen flat bubble.
+                        if streamingState.isPreparing {
+                            let pulse = sin(t * 4) * 0.5 + 0.5
+                            let fraction = minFraction + (1 - minFraction) * 0.55 * pulse
+                            return max(totalHeight * fraction, 4)
+                        }
                         guard !isSilent else {
                             return max(totalHeight * minFraction, 4)
                         }
