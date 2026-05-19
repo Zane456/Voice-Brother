@@ -973,16 +973,6 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
 
-        // 抄豆包：开启 Voice Processing —— 自带 AGC（自动增益控制），把偏小的
-        // 内置麦克风信号自动放大到可用电平；附带的回声消除也顺带覆盖了微信通话场景。
-        // 必须在 engine.start() 与 installTap 之前调用。失败则回退到裸输入。
-        do {
-            try inputNode.setVoiceProcessingEnabled(true)
-            debugLog("Voice processing (AGC) enabled on input node")
-        } catch {
-            debugLog("setVoiceProcessingEnabled failed: \(error.localizedDescription) — falling back to raw input")
-        }
-
         let format = inputNode.outputFormat(forBus: 0)
         debugLog("Audio format: sampleRate=\(format.sampleRate), channels=\(format.channelCount), bits=\(format.streamDescription.pointee.mBitsPerChannel), bluetooth=\(Self.isCurrentInputBluetooth())")
 
@@ -1000,9 +990,10 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             interleaved: false
         )!
 
-        // Voice Processing 的输入是多通道（本机 9 ch），且没有标准 channel layout，
-        // AVAudioConverter 无法把它降混成单声道（会输出全 0）。所以转换器只负责
-        // 采样率转换：源格式固定为「单声道 + 设备采样率」，降混由 tap 里自己取 ch0。
+        // 某些场景下系统会把输入切到 VPIO 多通道模式（如微信通话，本机 9 ch），
+        // 这种格式没有标准 channel layout，AVAudioConverter 无法把它降混成单声道
+        // （会输出全 0）。所以转换器只负责采样率转换：源格式固定为「单声道 + 设备
+        // 采样率」，降混由 tap 里自己取 channel 0（普通模式下 ch0 即麦克风信号）。
         let monoSourceFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: format.sampleRate,
@@ -1217,10 +1208,14 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             return
         }
 
+        // Learned correction rules (自学习纠错) are merged AFTER the user's
+        // manual rules. If the learning subsystem is empty/disabled this is
+        // just the manual list — behaviour is unchanged.
+        CorrectionLearningEngine.shared.noteTranscription(rawText: text)
         var processedText = TextProcessor.process(
             text: text,
             removeFillers: configManager.removeFillers,
-            rules: configManager.replacements
+            rules: configManager.replacements + CorrectionLearningEngine.shared.activeRules
         )
 
         guard !processedText.isEmpty else {
@@ -1289,7 +1284,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             return
         }
 
-        let allSamples = mergeAudioSamples(from: chunks)
+        var allSamples = mergeAudioSamples(from: chunks)
 
         guard !allSamples.isEmpty else {
             debugLog("transcribeAndInject SKIPPED: allSamples empty after merge (skipSamples=\(skipSamples))")
@@ -1317,16 +1312,33 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         //     CoreAudio device). Point the user at the real cause.
         //   - RMS > 0 but below threshold → genuine quiet / too-far-from-mic.
         let rms = sqrt(allSamples.reduce(0) { $0 + $1 * $1 } / Float(allSamples.count))
-        guard rms > 0.003 else {
-            debugLog("transcribeAndInject SKIPPED: silent audio, RMS=\(rms) (threshold=0.003), samples=\(allSamples.count)")
-            let msg = rms == 0.0
-                ? "麦克风无输入，可能被其他 app 占用"
-                : "声音太小，请靠近麦克风"
-            RecordingOverlayPanel.shared.showBriefMessage(msg)
+        // Reject only genuinely-dead input (RMS ~0 = the mic delivered all-zero
+        // buffers, e.g. held by another app feeding silence). Quiet speech — a
+        // built-in mic is naturally low-level — is NOT rejected here; it gets
+        // normalised up just below.
+        guard rms > 0.0002 else {
+            debugLog("transcribeAndInject SKIPPED: silent audio, RMS=\(rms), samples=\(allSamples.count)")
+            RecordingOverlayPanel.shared.showBriefMessage("麦克风无输入，可能被其他 app 占用")
             state = .ready
             return
         }
-        debugLog("transcribeAndInject: samples=\(allSamples.count), RMS=\(String(format: "%.4f", rms)), duration=\(String(format: "%.1f", Double(allSamples.count) / 16000.0))s")
+
+        // Software AGC — replaces the VPIO/AGC path, which cost ~hundreds of ms
+        // of cold-start latency on every key press. The built-in mic delivers a
+        // very low-level signal (~-56 dBFS); scale the whole utterance up by peak
+        // so the ASR model gets a healthy level. The gain is capped so we never
+        // clip, and an already-hot signal (AirPods) is left essentially untouched
+        // (gain ≈ 1, and we never attenuate).
+        let peak = allSamples.reduce(Float(0)) { max($0, abs($1)) }
+        if peak > 0 {
+            let gain = min(Float(0.6) / peak, Float(40))
+            if gain > 1.05 {
+                for i in allSamples.indices { allSamples[i] *= gain }
+                debugLog("Software AGC: peak=\(String(format: "%.4f", peak)) → gain=\(String(format: "%.1f", gain))x")
+            }
+        }
+        let gainedRMS = sqrt(allSamples.reduce(0) { $0 + $1 * $1 } / Float(allSamples.count))
+        debugLog("transcribeAndInject: samples=\(allSamples.count), RMS=\(String(format: "%.4f", rms))→\(String(format: "%.4f", gainedRMS)), duration=\(String(format: "%.1f", Double(allSamples.count) / 16000.0))s")
 
         // Build hotwords context string
         let hotwords = configManager.hotwords
@@ -1356,11 +1368,14 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         }.value
         debugLog("ASR raw result: \"\(text)\" (empty=\(text.isEmpty)) — \(MLXMemoryGovernor.snapshotDescription())")
 
-        // Process text (Layer 1 filler removal + Layer 2 ITN + replacements)
+        // Process text (Layer 1 filler removal + Layer 2 ITN + replacements).
+        // Learned correction rules (自学习纠错) are merged after the user's
+        // manual rules; an empty/failed learning store leaves behaviour unchanged.
+        CorrectionLearningEngine.shared.noteTranscription(rawText: text)
         var processedText = TextProcessor.process(
             text: text,
             removeFillers: configManager.removeFillers,
-            rules: configManager.replacements
+            rules: configManager.replacements + CorrectionLearningEngine.shared.activeRules
         )
         debugLog("After TextProcessor: \"\(processedText)\"")
 
