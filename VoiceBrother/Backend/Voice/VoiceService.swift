@@ -564,6 +564,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// No-op on built-in mic (no SCO cost to pay) or when the service isn't ready.
     private func engageFocusWarmUp() {
         guard Self.isCurrentInputBluetooth() else { return }
+        guard keyboardListenerRef?.isMeetingActive != true else { return }
         guard state == .ready else { return }
 
         // Recording is in progress: the engine is already up under recording's
@@ -892,6 +893,12 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// near-zero samples. Bluetooth gets a longer warm-up because the SCO link
     /// can take >1s to stabilize on AirPods specifically.
     private func prewarmAudioEngine() {
+        // A meeting recording owns the microphone. Do not keep VoiceService's
+        // background warm-up tap alive while the meeting mic engine is active.
+        guard keyboardListenerRef?.isMeetingActive != true else {
+            debugLog("Pre-warm skipped — meeting recording owns the microphone")
+            return
+        }
         let isBluetooth = Self.isCurrentInputBluetooth()
         let warmDuration = prewarmDuration
         debugLog("Pre-warming audio engine (\(isBluetooth ? "Bluetooth" : "wired/built-in"), duration=\(warmDuration)s)")
@@ -899,6 +906,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             do {
                 let engine = AVAudioEngine()
                 let inputNode = engine.inputNode
+
                 let format = inputNode.outputFormat(forBus: 0)
                 guard format.sampleRate > 0 else { return }
 
@@ -906,13 +914,27 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                 try engine.start()
 
                 DispatchQueue.main.asyncAfter(deadline: .now() + warmDuration) {
-                    engine.inputNode.removeTap(onBus: 0)
+                    // Stop before removeTap — see stopAudioEngineImmediately().
                     engine.stop()
+                    engine.inputNode.removeTap(onBus: 0)
                 }
             } catch {
                 debugLog("Audio pre-warm failed (non-fatal): \(error)")
             }
         }
+    }
+
+    /// Hand the microphone over to a meeting recording. VoiceService keeps its
+    /// `AVAudioEngine` warm between voice inputs (keep-alive timer / focus
+    /// warm-up), so the meeting drops that resident tap before starting its own
+    /// long-running capture. Pre-warming stays suppressed via `isMeetingActive`
+    /// until the meeting ends.
+    func releaseAudioEngineForMeeting() {
+        engineKeepAliveTimer?.invalidate()
+        engineKeepAliveTimer = nil
+        isFocusWarmEngaged = false
+        stopAudioEngineImmediately()
+        debugLog("Released audio engine — microphone handed to meeting recording")
     }
 
     /// Per-recording flag set the first time the audio tap delivers a non-silent
@@ -951,6 +973,16 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
 
+        // 抄豆包：开启 Voice Processing —— 自带 AGC（自动增益控制），把偏小的
+        // 内置麦克风信号自动放大到可用电平；附带的回声消除也顺带覆盖了微信通话场景。
+        // 必须在 engine.start() 与 installTap 之前调用。失败则回退到裸输入。
+        do {
+            try inputNode.setVoiceProcessingEnabled(true)
+            debugLog("Voice processing (AGC) enabled on input node")
+        } catch {
+            debugLog("setVoiceProcessingEnabled failed: \(error.localizedDescription) — falling back to raw input")
+        }
+
         let format = inputNode.outputFormat(forBus: 0)
         debugLog("Audio format: sampleRate=\(format.sampleRate), channels=\(format.channelCount), bits=\(format.streamDescription.pointee.mBitsPerChannel), bluetooth=\(Self.isCurrentInputBluetooth())")
 
@@ -968,8 +1000,18 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             interleaved: false
         )!
 
-        guard let converter = AVAudioConverter(from: format, to: targetFormat) else {
-            debugLog("Failed to create audio converter from \(format) to \(targetFormat)")
+        // Voice Processing 的输入是多通道（本机 9 ch），且没有标准 channel layout，
+        // AVAudioConverter 无法把它降混成单声道（会输出全 0）。所以转换器只负责
+        // 采样率转换：源格式固定为「单声道 + 设备采样率」，降混由 tap 里自己取 ch0。
+        let monoSourceFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: format.sampleRate,
+            channels: 1,
+            interleaved: false
+        )!
+
+        guard let converter = AVAudioConverter(from: monoSourceFormat, to: targetFormat) else {
+            debugLog("Failed to create audio converter from \(monoSourceFormat) to \(targetFormat)")
             throw NSError(domain: "VoiceService", code: -2, userInfo: [NSLocalizedDescriptionKey: "音频格式转换器创建失败"])
         }
 
@@ -1013,6 +1055,20 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                 self.hasReceivedRealAudio = true
             }
 
+            // VPIO 给的是多通道 buffer（各通道内容完全相同），先手动取 channel 0
+            // 拼成单声道 buffer，再交给转换器做 48k→16k 采样率转换。
+            guard buffer.frameLength > 0, let srcChannel = buffer.floatChannelData?[0] else { return }
+            guard let monoBuffer = AVAudioPCMBuffer(
+                pcmFormat: monoSourceFormat,
+                frameCapacity: buffer.frameLength
+            ) else {
+                DebugLog.write("[VoiceService] Audio tap: FAILED to allocate mono buffer")
+                return
+            }
+            monoBuffer.frameLength = buffer.frameLength
+            memcpy(monoBuffer.floatChannelData![0], srcChannel,
+                   Int(buffer.frameLength) * MemoryLayout<Float>.size)
+
             // Convert to 16kHz mono Float32
             let frameCount = AVAudioFrameCount(Double(buffer.frameLength) * 16000.0 / format.sampleRate)
             // Skip empty buffers — allocating with capacity 1 would yield an
@@ -1029,7 +1085,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             var error: NSError?
             let status = converter.convert(to: convertedBuffer, error: &error) { _, outStatus in
                 outStatus.pointee = .haveData
-                return buffer
+                return monoBuffer
             }
 
             guard status != .error else {
@@ -1137,8 +1193,14 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             audioConfigChangeObserver = nil
         }
         if let engine = audioEngine {
-            engine.inputNode.removeTap(onBus: 0)
+            // Order matters: stop the engine BEFORE removing the tap.
+            // `stop()` quiesces the CoreAudio IO thread; only then is it safe
+            // for `removeTap` to release the tap closure (and the
+            // AVAudioConverter it captures). The reverse order races the IO
+            // thread — it can dereference the just-freed converter and jump to
+            // a null callback (EXC_BAD_ACCESS / SIGSEGV on the audio thread).
             engine.stop()
+            engine.inputNode.removeTap(onBus: 0)
         }
         audioEngine = nil
     }

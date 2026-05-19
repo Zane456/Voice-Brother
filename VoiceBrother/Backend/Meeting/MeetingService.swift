@@ -168,6 +168,9 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         // avoids microphone contention and prevents a second ASR model from
         // being loaded while the meeting's own model is resident.
         voiceService?.keyboardListenerRef?.isMeetingActive = true
+        // Drop any warm VoiceService input engine before the meeting owns the
+        // mic. The meeting uses its own VPIO-enabled engine below.
+        voiceService?.releaseAudioEngineForMeeting()
 
         recordingTask = Task { @MainActor in
             do {
@@ -525,9 +528,19 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         isRecording = true
         audioBuffer.clearAll()
 
-        // Start microphone capture
+        // Start microphone capture.
         let micEngine = AVAudioEngine()
         let inputNode = micEngine.inputNode
+
+        // 与 VoiceService 一致：开 Voice Processing 拿 AGC，把偏小的内置麦克风
+        // 电平自动放大到可用电平。必须在读 outputFormat / installTap / start 之前。
+        do {
+            try inputNode.setVoiceProcessingEnabled(true)
+            DebugLog.write("[MeetingService] Voice processing (AGC) enabled on mic input node")
+        } catch {
+            DebugLog.write("[MeetingService] setVoiceProcessingEnabled failed: \(error.localizedDescription) — falling back to raw input")
+        }
+
         let micFormat = inputNode.outputFormat(forBus: 0)
         let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -536,7 +549,15 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
             interleaved: false
         )!
 
-        let micConverter = AVAudioConverter(from: micFormat, to: targetFormat)!
+        // VP 的输入是多通道且无标准 channel layout，AVAudioConverter 无法降混
+        // （会输出全 0）。转换器只做采样率转换，降混在 tap 里手动取 ch0。
+        let micMonoFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: micFormat.sampleRate,
+            channels: 1,
+            interleaved: false
+        )!
+        let micConverter = AVAudioConverter(from: micMonoFormat, to: targetFormat)!
 
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: micFormat) { [weak self] buffer, _ in
             guard let self = self, self.isRecording else { return }
@@ -556,13 +577,24 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 }
             }
 
+            // VP 给的是多通道 buffer（各通道内容相同），手动取 ch0 拼成单声道，
+            // 再交给转换器做采样率转换。
+            guard buffer.frameLength > 0, let srcChannel = buffer.floatChannelData?[0] else { return }
+            guard let monoBuffer = AVAudioPCMBuffer(
+                pcmFormat: micMonoFormat,
+                frameCapacity: buffer.frameLength
+            ) else { return }
+            monoBuffer.frameLength = buffer.frameLength
+            memcpy(monoBuffer.floatChannelData![0], srcChannel,
+                   Int(buffer.frameLength) * MemoryLayout<Float>.size)
+
             let frameCount = AVAudioFrameCount(Double(buffer.frameLength) * Self.sampleRate / micFormat.sampleRate)
             guard let converted = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: frameCount) else { return }
 
             var error: NSError?
             let status = micConverter.convert(to: converted, error: &error) { _, outStatus in
                 outStatus.pointee = .haveData
-                return buffer
+                return monoBuffer
             }
             guard status != .error else { return }
 
@@ -577,6 +609,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
 
         self.audioEngine = micEngine
         try micEngine.start()
+        DebugLog.write("[MeetingService] Mic engine started: outputFormat=\(micFormat.sampleRate)Hz/\(micFormat.channelCount)ch, inputFormat=\(inputNode.inputFormat(forBus: 0).sampleRate)Hz/\(inputNode.inputFormat(forBus: 0).channelCount)ch, voiceProcessing=\(inputNode.isVoiceProcessingEnabled)")
 
         // Snapshot the screen-recording preference once for this meeting — the
         // UI toggle is disabled while a meeting runs, so this can't change.
@@ -650,6 +683,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 writeToFile("> ⚠️ 系统音频未能采集（可能未授予屏幕录制权限），本次录制仅采集麦克风。\n\n")
             }
         }
+        DebugLog.write("[MeetingService] System audio capture started=\(systemAudioCaptured), screenRecording=\(screenRecordingEnabled)")
 
         // Main recording loop
         // Pre-allocate for vadForceCut duration to avoid repeated resizing
@@ -663,6 +697,15 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
 
             // Collect buffered audio
             let (currentMic, currentSys) = audioBuffer.swapAll()
+
+            // Diagnostic: per-window capture levels — reveals whether the mic
+            // or the system-audio path is silent. Remove once the capture
+            // problem is diagnosed and fixed.
+            let micSamples = currentMic.reduce(0) { $0 + $1.count }
+            let sysSamples = currentSys.reduce(0) { $0 + $1.count }
+            let micRMS = Self.rmsOfChunks(currentMic)
+            let sysRMS = Self.rmsOfChunks(currentSys)
+            DebugLog.write("[MeetingService] window mic[chunks=\(currentMic.count) samples=\(micSamples) RMS=\(String(format: "%.5f", micRMS))] sys[chunks=\(currentSys.count) samples=\(sysSamples) RMS=\(String(format: "%.5f", sysRMS))]")
 
             // Mix audio
             if let mixed = mixAudio(sysChunks: currentSys, micChunks: currentMic), !mixed.isEmpty {
@@ -786,6 +829,17 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
     }
 
     // MARK: - Audio Mixing (vDSP-optimized, minimal allocations)
+
+    /// Diagnostic helper: RMS across a list of audio chunks. Returns 0 when empty.
+    static func rmsOfChunks(_ chunks: [[Float]]) -> Float {
+        var sum: Float = 0
+        var count = 0
+        for chunk in chunks {
+            for s in chunk { sum += s * s }
+            count += chunk.count
+        }
+        return count > 0 ? (sum / Float(count)).squareRoot() : 0
+    }
 
     private func mixAudio(sysChunks: [[Float]], micChunks: [[Float]]) -> [Float]? {
         // Concatenate chunks into contiguous arrays
