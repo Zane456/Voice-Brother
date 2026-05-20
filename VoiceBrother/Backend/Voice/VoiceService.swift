@@ -131,6 +131,13 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// Timestamp when recording started, used to compute duration for history.
     private var recordingStartTime: Date?
 
+    /// UUID identifying the current voice session, used as the `session` field
+    /// in `ASRLogger` events so a `tail -f /tmp/vb_asr_events.log` can be
+    /// filtered to one press. Refreshed in `handleKeyPress`; never cleared so
+    /// late events (e.g. inject_completed after a quick second press) still
+    /// carry the press they belong to.
+    private var currentSessionID: UUID?
+
     /// Safety timer to auto-stop recording after 120 seconds.
     private var safetyTimer: Timer?
 
@@ -620,8 +627,15 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     private func handleKeyPress() {
         guard state == .ready else {
             debugLog("handleKeyPress REJECTED: state=\(state.displayText), expected .ready")
+            ASRLogger.shared.event(.keyPress, sessionID: currentSessionID,
+                                   props: ["rejected": true, "state": state.displayText])
             return
         }
+
+        let session = UUID()
+        currentSessionID = session
+        ASRLogger.shared.event(.sessionBegin, sessionID: session,
+                               props: ["bluetooth": Self.isCurrentInputBluetooth()])
 
         do {
             isRecording = true
@@ -641,6 +655,8 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             recordingStartTime = Date()
             state = .recording
             debugLog("Recording started successfully, appContext=\(recordingAppContext ?? "nil")")
+            ASRLogger.shared.event(.recordingStarted, sessionID: session,
+                                   props: ["app": recordingAppContext ?? ""])
 
             // Start cloud streaming if using VolcanoASREngine
             if let volcEngine = asrEngine as? VolcanoASREngine {
@@ -648,6 +664,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             }
 
             RecordingOverlayPanel.shared.show()
+            ASRLogger.shared.event(.panelPresentRecording, sessionID: session)
             playStartSound()
 
             // Safety timer: auto-stop after 120 seconds
@@ -693,6 +710,9 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         } catch {
             debugLog("FAILED to start audio engine: \(error)")
             print("[VoiceService] Failed to start audio engine: \(error)")
+            ASRLogger.shared.event(.asrFailed, sessionID: session,
+                                   props: ["stage": "audio_engine_start",
+                                           "error": "\(error)"])
             // Fully reset state so subsequent key presses can start a new
             // recording. Without this the next handleKeyPress would go through
             // (state == .ready) but handleKeyRelease would be triggered on a
@@ -714,6 +734,8 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// immediate stop path: when something went wrong we don't want to keep
     /// holding the mic open for a "warm" follow-up.
     private func abortRecordingWithMessage(_ message: String) {
+        ASRLogger.shared.event(.interruptMicOccupied, sessionID: currentSessionID,
+                               props: ["msg": message])
         isRecording = false
         safetyTimer?.invalidate(); safetyTimer = nil
         audioHealthCheckTimer?.invalidate(); audioHealthCheckTimer = nil
@@ -722,14 +744,21 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         clearAudioChunks()
         (asrEngine as? VolcanoASREngine)?.cancelStreaming()
         RecordingOverlayPanel.shared.showBriefMessage(message)
+        ASRLogger.shared.event(.panelHidden, sessionID: currentSessionID,
+                               props: ["reason": "abort"])
         state = .ready
     }
 
     private func handleKeyRelease() {
         guard isRecording else {
             debugLog("handleKeyRelease REJECTED: isRecording=false (recording never started?)")
+            ASRLogger.shared.event(.keyRelease, sessionID: currentSessionID,
+                                   props: ["rejected": true])
             return
         }
+        let recDuration = recordingStartTime.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
+        ASRLogger.shared.event(.keyRelease, sessionID: currentSessionID,
+                               props: ["rec_ms": recDuration, "taps": tapFireCount])
 
         // Hide the overlay the instant the user lets go — the bubble's job
         // is to confirm "I'm listening", not "I'm thinking". ASR + tail
@@ -737,6 +766,8 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         // will flash back via showBriefMessage. The mic stays open for a
         // short tail-capture window so trailing syllables aren't clipped.
         RecordingOverlayPanel.shared.hide()
+        ASRLogger.shared.event(.panelHidden, sessionID: currentSessionID,
+                               props: ["reason": "key_release"])
         isCapturingTail = true
 
         // Stop the timers immediately — no point doing health checks
@@ -766,7 +797,12 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     private func finalizeRecordingAfterTail() {
         // Defensive: if a cancel/meeting-handoff already cleaned up while we
         // were sleeping, bail out so we don't double-process.
-        guard isCapturingTail else { return }
+        guard isCapturingTail else {
+            ASRLogger.shared.event(.dropLateResult, sessionID: currentSessionID,
+                                   props: ["stage": "finalize", "reason": "isCapturingTail=false"])
+            return
+        }
+        ASRLogger.shared.event(.stopRequested, sessionID: currentSessionID)
         isCapturingTail = false
         isRecording = false
 
@@ -803,6 +839,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
 
     private func handleCancel() {
         guard isRecording || state == .recording else { return }
+        ASRLogger.shared.event(.interruptEsc, sessionID: currentSessionID)
         // Abort any pending tail-capture so the scheduled finalize bails out.
         isCapturingTail = false
         isRecording = false
@@ -822,6 +859,8 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         (asrEngine as? VolcanoASREngine)?.cancelStreaming()
 
         RecordingOverlayPanel.shared.hide()
+        ASRLogger.shared.event(.panelHidden, sessionID: currentSessionID,
+                               props: ["reason": "esc"])
         state = .ready
         print("[VoiceService] Recording cancelled by ESC")
     }
@@ -857,6 +896,8 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     }
 
     private func handleMeetingToggle() {
+        ASRLogger.shared.event(.interruptMeetingToggle, sessionID: currentSessionID,
+                               props: ["wasRecording": isRecording])
         // Cancel any in-progress voice recording (including tail capture)
         if isRecording {
             isCapturingTail = false
@@ -1134,6 +1175,9 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// app released the device mid-recording, system flipped formats).
     private func attemptAudioEngineRecovery(reason: String) {
         guard isRecording else { return }
+        ASRLogger.shared.event(.audioEngineRecoveryAttempt, sessionID: currentSessionID,
+                               props: ["reason": reason,
+                                       "alreadyAttempted": audioRecoveryAttempted])
         guard !audioRecoveryAttempted else {
             debugLog("Audio engine recovery skipped — already attempted this session (\(reason))")
             return
@@ -1208,7 +1252,13 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         // No hide() here — handleKeyRelease already hid the overlay the
         // instant the user let go. Error paths re-show via showBriefMessage.
 
+        let session = currentSessionID
+        ASRLogger.shared.event(.finalReceived, sessionID: session,
+                               props: ["engine": "volcano", "len": text.count])
+
         guard !text.isEmpty else {
+            ASRLogger.shared.event(.asrFinished, sessionID: session,
+                                   props: ["empty": true])
             state = .ready
             return
         }
@@ -1217,11 +1267,14 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         // manual rules. If the learning subsystem is empty/disabled this is
         // just the manual list — behaviour is unchanged.
         CorrectionLearningEngine.shared.noteTranscription(rawText: text)
+        ASRLogger.shared.event(.processStarted, sessionID: session)
         var processedText = TextProcessor.process(
             text: text,
             removeFillers: configManager.removeFillers,
             rules: configManager.replacements + CorrectionLearningEngine.shared.activeRules
         )
+        ASRLogger.shared.event(.processCompleted, sessionID: session,
+                               props: ["len": processedText.count])
 
         guard !processedText.isEmpty else {
             state = .ready
@@ -1244,11 +1297,16 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         }
 
         if let polisher, polisher.shouldPolish(processedText) {
+            let polishStart = Date()
+            ASRLogger.shared.event(.llmPolishStarted, sessionID: session,
+                                   props: ["provider": configManager.llmProvider])
             do {
                 let polished = try await polisher.polish(processedText)
-                if !polished.isEmpty, polished != processedText {
-                    processedText = polished
-                }
+                let changed = !polished.isEmpty && polished != processedText
+                if changed { processedText = polished }
+                ASRLogger.shared.event(.llmPolishCompleted, sessionID: session,
+                                       props: ["dur_ms": ASRLogger.durMs(since: polishStart),
+                                               "changed": changed])
             } catch {
                 // Polish failure shouldn't block injection — the raw (but
                 // already filler-removed + replacements-applied) text is still
@@ -1256,10 +1314,16 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                 // instead of silently dropping the call.
                 debugLog("Polish failed: \(error.localizedDescription)")
                 print("[VoiceService] LLM polish failed: \(error)")
+                ASRLogger.shared.event(.llmPolishFailed, sessionID: session,
+                                       props: ["dur_ms": ASRLogger.durMs(since: polishStart),
+                                               "error": "\(error.localizedDescription)"])
             }
         }
 
+        ASRLogger.shared.event(.injectStarted, sessionID: session,
+                               props: ["len": processedText.count])
         TextInjector.typeText(processedText, preserveClipboard: configManager.preserveClipboard)
+        ASRLogger.shared.event(.injectCompleted, sessionID: session)
         playEndSound()
 
         let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
@@ -1359,6 +1423,13 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             ? configManager.voiceInputLanguage.asrLanguageHint
             : nil
 
+        let session = currentSessionID
+        let engineName = String(describing: type(of: engine))
+        ASRLogger.shared.event(.asrStarted, sessionID: session,
+                               props: ["engine": engineName,
+                                       "samples": allSamples.count,
+                                       "lang": asrLanguage ?? "auto"])
+        let asrStart = Date()
         // Run transcription on background thread to keep UI responsive.
         let text = await Task.detached { [engine] in
             let result = engine.transcribe(
@@ -1373,17 +1444,25 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             MLXMemoryGovernor.reclaim()
             return result
         }.value
+        ASRLogger.shared.event(.finalReceived, sessionID: session,
+                               props: ["engine": engineName,
+                                       "dur_ms": ASRLogger.durMs(since: asrStart),
+                                       "len": text.count,
+                                       "empty": text.isEmpty])
         debugLog("ASR raw result: \"\(text)\" (empty=\(text.isEmpty)) — \(MLXMemoryGovernor.snapshotDescription())")
 
         // Process text (Layer 1 filler removal + Layer 2 ITN + replacements).
         // Learned correction rules (自学习纠错) are merged after the user's
         // manual rules; an empty/failed learning store leaves behaviour unchanged.
         CorrectionLearningEngine.shared.noteTranscription(rawText: text)
+        ASRLogger.shared.event(.processStarted, sessionID: session)
         var processedText = TextProcessor.process(
             text: text,
             removeFillers: configManager.removeFillers,
             rules: configManager.replacements + CorrectionLearningEngine.shared.activeRules
         )
+        ASRLogger.shared.event(.processCompleted, sessionID: session,
+                               props: ["len": processedText.count])
         debugLog("After TextProcessor: \"\(processedText)\"")
 
         let isHotwordHallucination = Self.isLikelyHotwordHallucination(processedText, hotwords: hotwords)
@@ -1418,22 +1497,35 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         }
 
         if let polisher, polisher.shouldPolish(processedText) {
+            let polishStart = Date()
+            ASRLogger.shared.event(.llmPolishStarted, sessionID: session,
+                                   props: ["provider": configManager.llmProvider])
             do {
                 let polished = try await polisher.polish(processedText)
-                if !polished.isEmpty, polished != processedText {
+                let changed = !polished.isEmpty && polished != processedText
+                if changed {
                     NSLog("[VoiceService] LLM polish: output=\"%@\"", polished)
                     processedText = polished
                 } else {
                     NSLog("[VoiceService] LLM polish: no change")
                 }
+                ASRLogger.shared.event(.llmPolishCompleted, sessionID: session,
+                                       props: ["dur_ms": ASRLogger.durMs(since: polishStart),
+                                               "changed": changed])
             } catch {
                 NSLog("[VoiceService] LLM polish failed: %@", String(describing: error))
+                ASRLogger.shared.event(.llmPolishFailed, sessionID: session,
+                                       props: ["dur_ms": ASRLogger.durMs(since: polishStart),
+                                               "error": "\(error.localizedDescription)"])
             }
         }
 
         // Inject text — no panel update; the overlay is already hidden, so
         // displaying the final text in it would have no visible effect.
+        ASRLogger.shared.event(.injectStarted, sessionID: session,
+                               props: ["len": processedText.count])
         TextInjector.typeText(processedText, preserveClipboard: configManager.preserveClipboard)
+        ASRLogger.shared.event(.injectCompleted, sessionID: session)
         playEndSound()
 
         // Record to history (keep raw ASR alongside processed output so the

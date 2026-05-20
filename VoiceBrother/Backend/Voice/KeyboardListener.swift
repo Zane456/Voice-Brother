@@ -214,6 +214,8 @@ final class KeyboardListener {
                 if elapsed >= 0.5 {
                     meetingTriggeredWhileHeld = true
                     meetingTogglePending = true
+                    ASRLogger.shared.event(.meetingGestureDetected,
+                                           props: ["hold_ms": Int(elapsed * 1000)])
                 }
             }
 

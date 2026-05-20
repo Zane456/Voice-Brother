@@ -70,6 +70,7 @@
 		E83F3C86783D991A0D3589BB /* StatusBarIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB3CFE433E400BEC9CB639D1 /* StatusBarIcon.swift */; };
 		EA41A15ECB4ADDE600A174A5 /* AboutTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 560D607BF96DAFC7C3E9FA7D /* AboutTab.swift */; };
 		EA883D08854ECE60F3D82722 /* MLXMemoryGovernor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF2D14A6F964D5F86A56270F /* MLXMemoryGovernor.swift */; };
+		BF5426C7A1CF430FAFC8ADC5 /* ASRLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 206EB1AF8C5C4C499317B1B5 /* ASRLogger.swift */; };
 		EBCD19B842033CF09A09AE7B /* HistoryTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7396A941FD2ADCD9EBCC9D30 /* HistoryTab.swift */; };
 		EF4CB40EFE4FCC80FB06DF64 /* DebugLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B3F6F6AFE960B0DC3672A7E /* DebugLog.swift */; };
 		F51E10FA14699D86CF0CB9E3 /* VoiceTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11CF4C808CEB180A855D734F /* VoiceTab.swift */; };
@@ -146,6 +147,7 @@
 		F25F933AFF3A8EA8D1D5DB8A /* RecordingOverlayPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingOverlayPanel.swift; sourceTree = "<group>"; };
 		FCA68001D049DCFB4EE27FA8 /* KeyboardListener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardListener.swift; sourceTree = "<group>"; };
 		FF2D14A6F964D5F86A56270F /* MLXMemoryGovernor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXMemoryGovernor.swift; sourceTree = "<group>"; };
+		206EB1AF8C5C4C499317B1B5 /* ASRLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASRLogger.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -228,6 +230,7 @@
 			isa = PBXGroup;
 			children = (
 				89CD8D8801B4FD2AFEA9D00E /* AppleASREngine.swift */,
+				206EB1AF8C5C4C499317B1B5 /* ASRLogger.swift */,
 				AB3DCF3F0E5450D01CB50317 /* FillerRemover.swift */,
 				7BD9E34981B3DCA3AEDB9E1C /* FocusObserver.swift */,
 				5EAE1747CC0E65345D144202 /* ITNProcessor.swift */,
@@ -428,6 +431,7 @@
 				6E3BBB9AFD2A4C3DE5D08D29 /* AppConfig.swift in Sources */,
 				CE8F2B23ABF1030C978BA399 /* AppLogoView.swift in Sources */,
 				9A9AD02565A983E3754E150E /* AppleASREngine.swift in Sources */,
+				BF5426C7A1CF430FAFC8ADC5 /* ASRLogger.swift in Sources */,
 				01BDF40547F84FF65028E0F6 /* BrandGlyphs.swift in Sources */,
 				AA950AF155F08BC30A56C078 /* CodexBadge.swift in Sources */,
 				FA5C9A99D84709247E94A592 /* CodexButtonStyles.swift in Sources */,

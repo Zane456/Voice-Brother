@@ -90,6 +90,11 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
     /// (e.g. user toggled recording then walked away from the mic).
     private var transcribedSegmentCount: Int = 0
 
+    /// UUID identifying the current meeting, used as the `session` field in
+    /// `ASRLogger` events. Refreshed on each `start()`; never cleared so late
+    /// events (segment_transcribed after .idle) still trace back.
+    private var currentSessionID: UUID?
+
     // MARK: - Soft-merge state for appendSegment
     //
     // Rather than emit one timestamped line per VAD segment (which produces
@@ -170,6 +175,10 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         elapsedSeconds = 0
         // Model load (and, on first use, download) happens before recording —
         // show the preparing state so the UI isn't unresponsive meanwhile.
+        let session = UUID()
+        currentSessionID = session
+        ASRLogger.shared.event(.meetingPreparing, sessionID: session, scope: .meeting,
+                               props: ["model": meetingModel.huggingFaceId])
         state = .preparing
 
         // Show the overlay the instant the gesture completes — before the
@@ -277,6 +286,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 self.prepareProgress = nil
                 self.startTime = Date()
                 self.elapsedSeconds = 0
+                ASRLogger.shared.event(.meetingRecording, sessionID: self.currentSessionID, scope: .meeting)
                 self.state = .recording
                 self.startElapsedTimer()
                 // Overlay is already on screen (shown in .preparing) — just
@@ -326,6 +336,9 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
             RecordingOverlayPanel.shared.hide()
             state = .idle
         case .recording:
+            ASRLogger.shared.event(.meetingFinishing, sessionID: currentSessionID, scope: .meeting,
+                                   props: ["segments": transcribedSegmentCount,
+                                           "elapsed_s": elapsedSeconds])
             state = .finishing
             // Expose the in-progress markdown file so the History tab can
             // badge it as "生成中" until finalization + summarization finish.
@@ -1079,6 +1092,11 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         let capturedAudio = compacted
         let sampleRate = Int(Self.sampleRate)
 
+        let sessionID = currentSessionID
+        ASRLogger.shared.event(.meetingSegmentStarted, sessionID: sessionID, scope: .meeting,
+                               props: ["samples": compacted.count,
+                                       "dur_s": Double(compacted.count) / Double(Self.sampleRate)])
+
         pendingTranscriptionTask = Task.detached { [weak self] in
             // Serialize: wait for previous segment to finish
             await previousTask?.value
@@ -1090,6 +1108,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 (self?.configManager.meetingLanguage.asrLanguageHint,
                  self?.configManager.removeFillers ?? true)
             }
+            let segStart = Date()
             let text = engine.transcribe(
                 audio: capturedAudio,
                 sampleRate: sampleRate,
@@ -1102,7 +1121,13 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
             MLXMemoryGovernor.reclaim()
             let cleaned = removeFillers ? TextProcessor.removeFillers(from: text) : text
             let processed = TextProcessor.collapseRepeats(in: cleaned)
-            if !processed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let nonEmpty = !processed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ASRLogger.shared.event(.meetingSegmentTranscribed, sessionID: sessionID, scope: .meeting,
+                                   props: ["dur_ms": ASRLogger.durMs(since: segStart),
+                                           "raw_len": text.count,
+                                           "out_len": processed.count,
+                                           "kept": nonEmpty])
+            if nonEmpty {
                 await self?.appendSegment(timestamp: timestamp, text: processed)
             }
         }
