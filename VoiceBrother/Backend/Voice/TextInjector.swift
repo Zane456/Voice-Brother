@@ -104,6 +104,44 @@ enum TextInjector {
         }
     }
 
+    /// Type text character-by-character via CGEvent unicode keystrokes, with
+    /// `charDelay` seconds between characters. Used by 渐进上屏 mode so the
+    /// target app sees the transcription roll out like a typist instead of a
+    /// single Cmd+V paste. The clipboard is never touched — this path can't
+    /// collide with the user's clipboard contents.
+    ///
+    /// Synchronous on purpose: callers should hop to a detached Task (or
+    /// background queue) so an N-character roll-out doesn't block the caller
+    /// for `N * charDelay` seconds.
+    ///
+    /// Caveat: some IME-heavy Chinese targets eat individual unicode keystrokes
+    /// through their own input filter. For those the user should leave
+    /// 渐进上屏 off and stay on the default Cmd+V path.
+    static func typeTextProgressive(_ text: String, charDelay: TimeInterval = 0.035) {
+        guard !text.isEmpty else { return }
+        let source = CGEventSource(stateID: .hidSystemState)
+        for ch in text {
+            let utf16 = Array(String(ch).utf16)
+            guard !utf16.isEmpty,
+                  let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+            else { continue }
+            utf16.withUnsafeBufferPointer { ptr in
+                if let base = ptr.baseAddress {
+                    keyDown.keyboardSetUnicodeString(stringLength: utf16.count,
+                                                    unicodeString: base)
+                    keyUp.keyboardSetUnicodeString(stringLength: utf16.count,
+                                                  unicodeString: base)
+                }
+            }
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+            if charDelay > 0 {
+                Thread.sleep(forTimeInterval: charDelay)
+            }
+        }
+    }
+
     // MARK: - Clipboard Save / Restore
 
     /// Saves all pasteboard items with all their data types.

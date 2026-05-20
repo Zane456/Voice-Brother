@@ -661,6 +661,20 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             // Start cloud streaming if using VolcanoASREngine
             if let volcEngine = asrEngine as? VolcanoASREngine {
                 volcEngine.beginStreaming(sampleRate: 16000, language: "Chinese")
+                // Wire partial → overlay preview in 渐进上屏 mode. Volcano is the
+                // only engine that can emit partial mid-recording; Qwen/Apple
+                // fall back to showing the final string once it lands.
+                if configManager.typewriterMode {
+                    volcEngine.onStreamingUpdate = { partial in
+                        ASRLogger.shared.event(.partialReceived, sessionID: session,
+                                               props: ["engine": "volcano", "len": partial.count])
+                        DispatchQueue.main.async {
+                            RecordingOverlayPanel.shared.setStreamingText(partial)
+                        }
+                    }
+                } else {
+                    volcEngine.onStreamingUpdate = nil
+                }
             }
 
             RecordingOverlayPanel.shared.show()
@@ -758,16 +772,23 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         }
         let recDuration = recordingStartTime.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
         ASRLogger.shared.event(.keyRelease, sessionID: currentSessionID,
-                               props: ["rec_ms": recDuration, "taps": tapFireCount])
+                               props: ["rec_ms": recDuration, "taps": tapFireCount,
+                                       "typewriter": configManager.typewriterMode])
 
         // Hide the overlay the instant the user lets go — the bubble's job
         // is to confirm "I'm listening", not "I'm thinking". ASR + tail
         // capture run in the background; if transcription fails, the bubble
         // will flash back via showBriefMessage. The mic stays open for a
         // short tail-capture window so trailing syllables aren't clipped.
-        RecordingOverlayPanel.shared.hide()
-        ASRLogger.shared.event(.panelHidden, sessionID: currentSessionID,
-                               props: ["reason": "key_release"])
+        //
+        // 渐进上屏例外:本模式下浮窗承担"正在键入"的视觉反馈,要保留到 inject
+        // 结束才隐藏。injectFinalText 完成后会清空 streamingText,触发自然
+        // hide 链路。
+        if !configManager.typewriterMode {
+            RecordingOverlayPanel.shared.hide()
+            ASRLogger.shared.event(.panelHidden, sessionID: currentSessionID,
+                                   props: ["reason": "key_release"])
+        }
         isCapturingTail = true
 
         // Stop the timers immediately — no point doing health checks
@@ -1320,10 +1341,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             }
         }
 
-        ASRLogger.shared.event(.injectStarted, sessionID: session,
-                               props: ["len": processedText.count])
-        TextInjector.typeText(processedText, preserveClipboard: configManager.preserveClipboard)
-        ASRLogger.shared.event(.injectCompleted, sessionID: session)
+        await injectFinalText(processedText, session: session, engineName: "volcano")
         playEndSound()
 
         let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
@@ -1333,6 +1351,40 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         Task { await historyStore.insert(record) }
         // Voice input just completed — History tab opens on this segment next.
         configManager.lastHistoryKind = "voice"
+    }
+
+    /// Final-text injection with mode-aware dispatch. `typewriterMode == true`
+    /// rolls the text out one character at a time via CGEvent unicode keystrokes
+    /// (clipboard untouched); `false` keeps the existing single Cmd+V paste.
+    /// Centralised here so both the cloud-streaming path and the local-batch
+    /// path share identical sequencing — same ASRLogger events, same dispatch.
+    private func injectFinalText(_ processed: String,
+                                 session: UUID?,
+                                 engineName: String) async {
+        ASRLogger.shared.event(.injectStarted, sessionID: session,
+                               props: ["len": processed.count,
+                                       "mode": configManager.typewriterMode ? "typewriter" : "paste",
+                                       "engine": engineName])
+        if configManager.typewriterMode {
+            // For Qwen/Apple (which can't stream partial), surface the final
+            // text in the overlay just before keystroke rollout so the user
+            // sees what's being typed.
+            if engineName != "volcano" {
+                RecordingOverlayPanel.shared.setStreamingText(processed)
+            }
+            await Task.detached(priority: .userInitiated) {
+                TextInjector.typeTextProgressive(processed)
+            }.value
+            // Clear preview then hide — the bubble we held open through inject
+            // is no longer needed once the keystroke roll-out is done.
+            RecordingOverlayPanel.shared.setStreamingText("")
+            RecordingOverlayPanel.shared.hide()
+            ASRLogger.shared.event(.panelHidden, sessionID: session,
+                                   props: ["reason": "typewriter_done"])
+        } else {
+            TextInjector.typeText(processed, preserveClipboard: configManager.preserveClipboard)
+        }
+        ASRLogger.shared.event(.injectCompleted, sessionID: session)
     }
 
     private func transcribeAndInject(chunks: [Data]) async {
@@ -1520,12 +1572,9 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             }
         }
 
-        // Inject text — no panel update; the overlay is already hidden, so
-        // displaying the final text in it would have no visible effect.
-        ASRLogger.shared.event(.injectStarted, sessionID: session,
-                               props: ["len": processedText.count])
-        TextInjector.typeText(processedText, preserveClipboard: configManager.preserveClipboard)
-        ASRLogger.shared.event(.injectCompleted, sessionID: session)
+        // Inject text. The overlay was hidden on key-release, but typewriter
+        // mode re-surfaces it via setStreamingText so the user sees the roll-out.
+        await injectFinalText(processedText, session: session, engineName: engineName)
         playEndSound()
 
         // Record to history (keep raw ASR alongside processed output so the

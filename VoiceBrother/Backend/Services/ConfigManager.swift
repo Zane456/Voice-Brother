@@ -57,6 +57,10 @@ final class ConfigManager: ObservableObject, ConfigManagerProtocol {
         get { appConfig.preserveClipboard }
         set { appConfig.preserveClipboard = newValue }
     }
+    var typewriterMode: Bool {
+        get { appConfig.typewriterMode }
+        set { appConfig.typewriterMode = newValue }
+    }
     var historyRetentionMonths: Int {
         get { appConfig.historyRetentionMonths }
         set { appConfig.historyRetentionMonths = newValue }

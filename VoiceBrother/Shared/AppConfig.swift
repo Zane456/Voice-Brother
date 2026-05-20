@@ -39,6 +39,13 @@ final class AppConfig: ObservableObject {
     @Published var preserveClipboard: Bool {
         didSet { scheduleSave() }
     }
+    /// 渐进上屏模式("ASRTypeWriter")。开启后:
+    /// (A) 浮窗中实时显示识别预览(Volcano 真 partial / Apple+Qwen 转完整段);
+    /// (B) 目标 app 内按打字机节奏逐字键入(CGEventKeyboardSetUnicodeString)。
+    /// 默认关闭,维持现有"整段一次性 Cmd+V 粘贴"的行为。
+    @Published var typewriterMode: Bool {
+        didSet { scheduleSave() }
+    }
     /// Retention window (months) for voice transcription history.
     @Published var historyRetentionMonths: Int {
         didSet { scheduleSave() }
@@ -159,6 +166,7 @@ final class AppConfig: ObservableObject {
     static let defaultRemoveFillers = true
     static let defaultSpaceReposition = true
     static let defaultPreserveClipboard = true
+    static let defaultTypewriterMode = false
     static let defaultHistoryRetentionMonths = 2
     static let defaultMeetingRetentionMonths = 2
     static let defaultMeetingSavePath: String = {
@@ -215,6 +223,7 @@ final class AppConfig: ObservableObject {
         self.spaceReposition = Self.load("spaceReposition", default: Self.defaultSpaceReposition)
         self.meetingSavePath = Self.load("meetingSavePath", default: Self.defaultMeetingSavePath)
         self.preserveClipboard = Self.load("preserveClipboard", default: Self.defaultPreserveClipboard)
+        self.typewriterMode = Self.load("typewriterMode", default: Self.defaultTypewriterMode)
         self.historyRetentionMonths = Self.load("historyRetentionMonths", default: Self.defaultHistoryRetentionMonths)
         self.meetingRetentionMonths = Self.load("meetingRetentionMonths", default: Self.defaultMeetingRetentionMonths)
         self.onboardingDone = Self.load("onboardingDone", default: Self.defaultOnboardingDone)
@@ -318,6 +327,7 @@ final class AppConfig: ObservableObject {
         defaults.set(voiceInputLanguage, forKey: "voiceInputLanguage")
         defaults.set(meetingSavePath, forKey: "meetingSavePath")
         defaults.set(preserveClipboard, forKey: "preserveClipboard")
+        defaults.set(typewriterMode, forKey: "typewriterMode")
         defaults.set(historyRetentionMonths, forKey: "historyRetentionMonths")
         defaults.set(meetingRetentionMonths, forKey: "meetingRetentionMonths")
         defaults.set(onboardingDone, forKey: "onboardingDone")

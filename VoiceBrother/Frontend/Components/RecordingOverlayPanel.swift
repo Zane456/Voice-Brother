@@ -290,6 +290,28 @@ final class RecordingOverlayPanel: NSPanel {
         streamingState.isPreparing = false
     }
 
+    /// Show streaming ASR text alongside the waveform — the 渐进上屏 mode's
+    /// "in-flight transcription" preview. The first call expands the panel
+    /// from waveform-only to waveform + text; subsequent calls just update
+    /// the text in place. Pass an empty string to hide the preview again.
+    func setStreamingText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            streamingState.isEnabled = false
+            streamingState.text = ""
+            return
+        }
+        let wasEnabled = streamingState.isEnabled
+        if !wasEnabled {
+            let screenWidth = NSScreen.main?.frame.width ?? 1440
+            streamingState.maxTextWidth = screenWidth / 2 - horizontalOverhead
+            streamingState.fontSize = 14
+            streamingState.isEnabled = true
+        }
+        streamingState.setTarget(trimmed)
+        resizePanelToFitContent()
+    }
+
     /// Last brief message + when it was shown. Used to suppress repeat toasts
     /// when the underlying failure is sticky (e.g. mic occupied gives the same
     /// error every key press — showing it every time turns into spam).
