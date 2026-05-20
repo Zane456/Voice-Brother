@@ -74,6 +74,12 @@ struct VoiceHistoryView: View {
     @State private var showClearConfirm = false
     @State private var pendingClearGroup: DateGroup?
 
+    // 自学习纠错：编辑某条历史记录时，改动会被 CorrectionLearningEngine
+    // 学成替换规则，下次转写自动套用。
+    @State private var editingId: UUID?
+    @State private var editText: String = ""
+    @State private var learnToast: String?
+
     private static let pageSize = 20
 
     private enum DateGroup: CaseIterable {
@@ -195,6 +201,61 @@ struct VoiceHistoryView: View {
                 Text("将清空所有历史记录，此操作不可撤销。")
             }
         }
+        .overlay(alignment: .bottom) {
+            if let toast = learnToast {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11)).foregroundColor(theme.accent)
+                    Text(toast)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.textPrimary)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .glassCard(cornerRadius: 10)
+                .padding(.bottom, 24)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: learnToast)
+    }
+
+    /// Persist an edited transcription and feed the change to the self-learning
+    /// correction engine. A failure in the learning engine cannot affect the
+    /// history update — they are independent steps.
+    ///
+    /// Diff source: `record.rawText` (raw ASR) ↔ user's edit. Diffing the
+    /// already-processed `record.text` would teach rules that chase LLM polish
+    /// artefacts instead of real ASR mistakes. For pre-migration records
+    /// (rawText == nil) we still save the edit but skip learning entirely.
+    private func saveEdit(_ record: TranscriptionRecord) {
+        let displayed = record.text
+        let newText = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        editingId = nil
+        guard !newText.isEmpty, newText != displayed else { return }
+        Task {
+            let updated = TranscriptionRecord(
+                id: record.id, timestamp: record.timestamp,
+                text: newText, duration: record.duration,
+                rawText: record.rawText
+            )
+            await historyStore.insert(updated)
+
+            if let raw = record.rawText, !raw.isEmpty {
+                let result = CorrectionLearningEngine.shared.learn(
+                    originalText: raw, correctedText: newText
+                )
+                if !result.message.isEmpty {
+                    learnToast = result.message
+                    let shown = result.message
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
+                        if learnToast == shown { learnToast = nil }
+                    }
+                }
+            }
+            await loadRecords()
+            await loadStatistics()
+            await loadKeywords()
+        }
     }
 
     private func loadRecords() async {
@@ -285,37 +346,70 @@ struct VoiceHistoryView: View {
             }
             .font(.system(size: 10)).foregroundColor(theme.textTertiary)
 
-            Text(record.text)
-                .font(.system(size: 13)).foregroundColor(theme.textPrimary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if editingId == record.id {
+                TextEditor(text: $editText)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.textPrimary)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 64)
+                    .padding(8)
+                    .background(theme.inputBackground)
+                    .cornerRadius(8)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.borderLight, lineWidth: 1))
 
-            HStack(spacing: 8) {
-                Spacer()
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(record.text, forType: .string)
-                    copiedId = record.id
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        if copiedId == record.id { copiedId = nil }
-                    }
-                } label: {
-                    Label(copiedId == record.id ? "已复制" : "复制",
-                          systemImage: copiedId == record.id ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(copiedId == record.id ? theme.accent : theme.accentSecondary)
-                }.buttonStyle(.plain)
+                HStack(spacing: 8) {
+                    Text("改对后会自动学成替换规则，下次转写自动套用")
+                        .font(.system(size: 10)).foregroundColor(theme.textTertiary)
+                    Spacer()
+                    Button("取消") { editingId = nil }
+                        .buttonStyle(.plain).font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.textSecondary)
+                    Button("保存") { saveEdit(record) }
+                        .buttonStyle(.plain).font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.accent)
+                }
+            } else {
+                Text(record.text)
+                    .font(.system(size: 13)).foregroundColor(theme.textPrimary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                Button {
-                    Task {
-                        await historyStore.delete(id: record.id.uuidString)
-                        records.removeAll { $0.id == record.id }
-                    }
-                } label: {
-                    Label("删除", systemImage: "trash")
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button {
+                        editText = record.text
+                        editingId = record.id
+                    } label: {
+                        Label("修正", systemImage: "pencil")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.accentSecondary)
+                    }.buttonStyle(.plain)
+
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(record.text, forType: .string)
+                        copiedId = record.id
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            if copiedId == record.id { copiedId = nil }
+                        }
+                    } label: {
+                        Label(copiedId == record.id ? "已复制" : "复制",
+                              systemImage: copiedId == record.id ? "checkmark" : "doc.on.doc")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.destructive.opacity(0.7))
-                }.buttonStyle(.plain)
+                        .foregroundColor(copiedId == record.id ? theme.accent : theme.accentSecondary)
+                    }.buttonStyle(.plain)
+
+                    Button {
+                        Task {
+                            await historyStore.delete(id: record.id.uuidString)
+                            records.removeAll { $0.id == record.id }
+                        }
+                    } label: {
+                        Label("删除", systemImage: "trash")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.destructive.opacity(0.7))
+                    }.buttonStyle(.plain)
+                }
             }
         }
         .padding(12)

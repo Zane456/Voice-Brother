@@ -649,7 +649,8 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 }
                 let rms = sqrtf(sum / Float(max(frameLength, 1)))
                 let dB = 20 * log10(max(rms, 1e-6))
-                let normalized = max(Float(0), min(Float(1), (dB + 50) / 40))
+                // Same window as VoiceService — raw mic level without VPIO/AGC.
+                let normalized = max(Float(0), min(Float(1), (dB + 75) / 45))
                 DispatchQueue.main.async {
                     RecordingOverlayPanel.shared.updateAudioLevel(normalized)
                 }

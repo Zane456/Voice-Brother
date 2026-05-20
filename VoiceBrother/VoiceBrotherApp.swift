@@ -40,6 +40,11 @@ struct VoiceBrotherApp: App {
         // Inject theme into overlay panel (separate NSPanel window hierarchy)
         RecordingOverlayPanel.shared.configure(themeManager: theme)
 
+        // Wire the self-learning correction engine (loads rules learned in
+        // previous sessions). Isolated subsystem — if it fails to load, voice
+        // input keeps working with manual rules only.
+        CorrectionLearningEngine.shared.configure(configManager: config)
+
         // Wire meeting toggle from keyboard shortcut to meeting service
         voice.meetingToggleAction = { [weak meeting] in
             meeting?.toggle()

@@ -326,12 +326,32 @@ struct TranscriptionRecord: Identifiable, Codable, Equatable {
     let text: String
     /// Recording duration in seconds (approximate).
     let duration: Double
+    /// Raw ASR result before TextProcessor / LLM polish. The self-learning
+    /// engine diffs this against the user's edit — learning from `text`
+    /// (the processed/polished output) would chase post-processing artefacts
+    /// rather than real ASR errors. Nullable for records saved before this
+    /// field existed; History disables learning when nil.
+    let rawText: String?
 
-    init(id: UUID = UUID(), timestamp: Date = Date(), text: String, duration: Double = 0) {
+    init(id: UUID = UUID(), timestamp: Date = Date(), text: String, duration: Double = 0, rawText: String? = nil) {
         self.id = id
         self.timestamp = timestamp
         self.text = text
         self.duration = duration
+        self.rawText = rawText
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, timestamp, text, duration, rawText
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        timestamp = try c.decode(Date.self, forKey: .timestamp)
+        text = try c.decode(String.self, forKey: .text)
+        duration = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
+        rawText = try c.decodeIfPresent(String.self, forKey: .rawText)
     }
 }
 

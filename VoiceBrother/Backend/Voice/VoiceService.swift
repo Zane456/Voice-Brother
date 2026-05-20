@@ -1022,7 +1022,12 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                 }
                 rawRMS = sqrtf(sum / Float(max(frameLength, 1)))
                 let dB = 20 * log10(max(rawRMS, 1e-6))
-                let normalized = max(Float(0), min(Float(1), (dB + 50) / 40))
+                // Window calibrated for the *raw* mic signal (no VPIO/AGC in the
+                // path). Built-in mic speech sits around -55 ~ -40 dBFS, AirPods
+                // around -25 ~ -10. Mapping [-75, -30] → [0, 1] gives a visible
+                // jump for quiet built-in input without clipping AirPods to
+                // permanent max.
+                let normalized = max(Float(0), min(Float(1), (dB + 75) / 45))
                 // Freeze the waveform the moment the user releases the key,
                 // even though we keep capturing audio for the tail window.
                 // The user's "I'm done" gesture should produce immediate
@@ -1258,7 +1263,9 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         playEndSound()
 
         let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
-        let record = TranscriptionRecord(text: processedText, duration: duration)
+        // Keep raw ASR alongside processed output — the self-learning engine
+        // diffs (raw → user edit) so it learns ASR mistakes, not LLM polish.
+        let record = TranscriptionRecord(text: processedText, duration: duration, rawText: text)
         Task { await historyStore.insert(record) }
         // Voice input just completed — History tab opens on this segment next.
         configManager.lastHistoryKind = "voice"
@@ -1429,9 +1436,10 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         TextInjector.typeText(processedText, preserveClipboard: configManager.preserveClipboard)
         playEndSound()
 
-        // Record to history
+        // Record to history (keep raw ASR alongside processed output so the
+        // self-learning engine has a real "before" side for diffing).
         let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
-        let record = TranscriptionRecord(text: processedText, duration: duration)
+        let record = TranscriptionRecord(text: processedText, duration: duration, rawText: text)
         Task { await historyStore.insert(record) }
         // Voice input just completed — History tab opens on this segment next.
         configManager.lastHistoryKind = "voice"
