@@ -203,8 +203,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // AI 大模型 toggles — mirror the in-app "AI 大模型（文本优化）" and
-        // "AI 大模型（内容处理）" cards so both cloud-LLM switches are reachable
+        // AI 大模型 toggles — mirror the in-app "AI 大模型（语音文本优化）" and
+        // "AI 大模型（声音内容处理）" cards so both cloud-LLM switches are reachable
         // without opening the settings window. View-based items: the whole row
         // is the hit target; the SwiftUI view observes `configManager`, so the
         // switch animates in place and the menu stays open after a toggle.
@@ -214,7 +214,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             voiceService: voiceService,
             keyPath: \.cloudLLMEnabled,
             icon: "brain",
-            title: "AI 大模型 · 文本优化",
+            title: "AI 大模型 · 语音文本优化",
             showsWarmup: true,
             width: Self.headerWidth
         )
@@ -226,7 +226,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             voiceService: voiceService,
             keyPath: \.meetingLLMEnabled,
             icon: "brain",
-            title: "AI 大模型 · 内容处理",
+            title: "AI 大模型 · 声音内容处理",
             showsWarmup: false,
             width: Self.headerWidth
         )

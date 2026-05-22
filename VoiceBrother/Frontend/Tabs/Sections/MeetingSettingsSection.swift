@@ -100,7 +100,7 @@ struct MeetingSettingsSection: View {
                 Image(systemName: "brain")
                     .font(.system(size: 13))
                     .foregroundColor(theme.accentSecondary)
-                Text("AI 大模型（内容处理）")
+                Text("AI 大模型（声音内容处理）")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(theme.textPrimary)
                 Spacer()

@@ -460,7 +460,7 @@ struct VoiceSettingsSection: View {
                 Image(systemName: "brain")
                     .font(.system(size: 13))
                     .foregroundColor(theme.accentSecondary)
-                Text("AI 大模型（文本优化）")
+                Text("AI 大模型（语音文本优化）")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(theme.textPrimary)
                 Spacer()
