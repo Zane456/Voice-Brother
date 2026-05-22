@@ -572,7 +572,8 @@ final class AppConfig: ObservableObject {
         update(provider: .deepseek, oldModels: ["deepseek-chat"])
         update(provider: .openRouter, oldModels: ["google/gemini-2.0-flash-001"])
         update(provider: .zhipu, oldModels: ["glm-4-flash"])
-        update(provider: .zai, oldModels: ["glm-5-turbo"])
+        // 不迁移 .zai：用户主动选了 glm-5-turbo（比 glm-5.1 快）。这条迁移
+        // 无法区分「主动选旧值」与「从未改过默认值」，留着会每次启动覆盖用户选择。
         update(provider: .doubao, oldModels: ["doubao-1-5-pro-32k-250115"])
         update(provider: .kimi, oldBaseURL: "https://api.moonshot.cn/v1", oldModels: ["moonshot-v1-8k"])
 
