@@ -20,6 +20,10 @@ class StreamingTextState: ObservableObject {
     /// "loading" waveform so the overlay reads as alive — not frozen —
     /// during the model-load wait that precedes actual recording.
     @Published var isPreparing: Bool = false
+    /// True when the overlay is showing a transient error/tip (showBriefMessage).
+    /// In this mode the content view drops the waveform — an error has nothing
+    /// to do with audio level — and centers the text.
+    @Published var isBriefMessage: Bool = false
 
     // Audio-driven waveform state
     @Published var audioLevel: CGFloat = 0
@@ -53,6 +57,7 @@ class StreamingTextState: ObservableObject {
         audioLevel = 0
         barHeights = Array(repeating: Self.minBarFraction, count: 5)
         isPreparing = false
+        isBriefMessage = false
     }
 
 }
@@ -64,24 +69,39 @@ struct RecordingOverlayContentView: View {
     @EnvironmentObject private var theme: ThemeManager
 
     var body: some View {
-        // Just the waveform — fill+center so the bubble's blue waveform lands
-        // dead-center in the (screen-centered) panel. The trailing text only
-        // appears for brief error messages, never for a live transcript.
-        HStack(alignment: .center, spacing: 0) {
-            RecordingWaveformView(streamingState: streamingState)
-                .frame(width: 36, height: 36)
-
-            if streamingState.isEnabled && !streamingState.text.isEmpty {
+        Group {
+            if streamingState.isBriefMessage {
+                // Brief error/tip — text only, centered. No waveform: an error
+                // message ("没识别到内容") has nothing to do with audio level.
                 Text(streamingState.text)
                     .font(.system(size: streamingState.fontSize, weight: .medium))
                     .foregroundColor(theme.textPrimary)
                     .lineLimit(nil)
-                    .multilineTextAlignment(.leading)
+                    .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: streamingState.maxTextWidth, alignment: .leading)
+                    .frame(maxWidth: streamingState.maxTextWidth)
                     .padding(.vertical, 12)
-                    .padding(.trailing, 16)
-                    .padding(.leading, 4)
+                    .padding(.horizontal, 16)
+            } else {
+                // Recording — the waveform, fill+centered so the bubble's blue
+                // waveform lands dead-center in the (screen-centered) panel.
+                HStack(alignment: .center, spacing: 0) {
+                    RecordingWaveformView(streamingState: streamingState)
+                        .frame(width: 36, height: 36)
+
+                    if streamingState.isEnabled && !streamingState.text.isEmpty {
+                        Text(streamingState.text)
+                            .font(.system(size: streamingState.fontSize, weight: .medium))
+                            .foregroundColor(theme.textPrimary)
+                            .lineLimit(nil)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: streamingState.maxTextWidth, alignment: .leading)
+                            .padding(.vertical, 12)
+                            .padding(.trailing, 16)
+                            .padding(.leading, 4)
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -106,6 +126,8 @@ final class RecordingOverlayPanel: NSPanel {
     private let cornerRadius: CGFloat = 12
     /// REC label + waveform + trailing padding
     private let horizontalOverhead: CGFloat = 110
+    /// Symmetric horizontal padding for a brief message (text only, no waveform).
+    private let briefHorizontalPadding: CGFloat = 32
 
     // MARK: Streaming State
 
@@ -339,8 +361,9 @@ final class RecordingOverlayPanel: NSPanel {
         let myToken = showToken
 
         let screenWidth = NSScreen.main?.frame.width ?? 1440
-        let maxTextWidth = screenWidth / 2 - horizontalOverhead
+        let maxTextWidth = screenWidth / 2 - briefHorizontalPadding
 
+        streamingState.isBriefMessage = true
         streamingState.isEnabled = true
         streamingState.fontSize = fontSize
         streamingState.maxTextWidth = maxTextWidth
@@ -402,8 +425,12 @@ final class RecordingOverlayPanel: NSPanel {
         let fontSize = streamingState.fontSize
         let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
 
+        // Horizontal chrome around the text: a brief message is text-only with
+        // symmetric padding; a recording overlay also reserves the waveform.
+        let horizontalChrome = streamingState.isBriefMessage ? briefHorizontalPadding : horizontalOverhead
+
         // Max text width must match SwiftUI view's constraint
-        let maxTextWidth = maxPanelWidth - horizontalOverhead
+        let maxTextWidth = maxPanelWidth - horizontalChrome
 
         // Calculate text bounds with wrapping at maxTextWidth
         let textRect = (streamingState.text as NSString).boundingRect(
@@ -414,7 +441,7 @@ final class RecordingOverlayPanel: NSPanel {
 
         // Panel dimensions
         let verticalPadding: CGFloat = 24
-        let panelWidth = min(horizontalOverhead + ceil(textRect.width), maxPanelWidth)
+        let panelWidth = min(horizontalChrome + ceil(textRect.width), maxPanelWidth)
         let panelHeight = max(compactSize, ceil(textRect.height) + verticalPadding)
 
         // Keep current top edge fixed, grow downward

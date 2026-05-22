@@ -40,7 +40,7 @@ final class AppConfig: ObservableObject {
         didSet { scheduleSave() }
     }
     /// 渐进上屏模式("ASRTypeWriter")。开启后:
-    /// (A) 浮窗中实时显示识别预览(Volcano 真 partial / Apple+Qwen 转完整段);
+    /// (A) 浮窗只显示波形,不预览识别文字;
     /// (B) 目标 app 内按打字机节奏逐字键入(CGEventKeyboardSetUnicodeString)。
     /// 默认关闭,维持现有"整段一次性 Cmd+V 粘贴"的行为。
     @Published var typewriterMode: Bool {

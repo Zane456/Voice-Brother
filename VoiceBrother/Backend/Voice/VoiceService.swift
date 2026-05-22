@@ -741,20 +741,8 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             // Start cloud streaming if using VolcanoASREngine
             if let volcEngine = asrEngine as? VolcanoASREngine {
                 volcEngine.beginStreaming(sampleRate: 16000, language: "Chinese")
-                // Wire partial → overlay preview in 渐进上屏 mode. Volcano is the
-                // only engine that can emit partial mid-recording; Qwen/Apple
-                // fall back to showing the final string once it lands.
-                if configManager.typewriterMode {
-                    volcEngine.onStreamingUpdate = { partial in
-                        ASRLogger.shared.event(.partialReceived, sessionID: session,
-                                               props: ["engine": "volcano", "len": partial.count])
-                        DispatchQueue.main.async {
-                            RecordingOverlayPanel.shared.setStreamingText(partial)
-                        }
-                    }
-                } else {
-                    volcEngine.onStreamingUpdate = nil
-                }
+                // 渐进上屏不再在浮窗显示识别预览(只保留波形),所以不消费 partial。
+                volcEngine.onStreamingUpdate = nil
             }
 
             RecordingOverlayPanel.shared.show()
@@ -861,9 +849,8 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         // will flash back via showBriefMessage. The mic stays open for a
         // short tail-capture window so trailing syllables aren't clipped.
         //
-        // 渐进上屏例外:本模式下浮窗承担"正在键入"的视觉反馈,要保留到 inject
-        // 结束才隐藏。injectFinalText 完成后会清空 streamingText,触发自然
-        // hide 链路。
+        // 渐进上屏例外:本模式下浮窗(只显示波形)保留到 inject 结束才隐藏,
+        // 由 injectFinalText 键入完成后调 hide()。
         if !configManager.typewriterMode {
             RecordingOverlayPanel.shared.hide()
             ASRLogger.shared.event(.panelHidden, sessionID: currentSessionID,
@@ -1467,18 +1454,11 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                                        "mode": configManager.typewriterMode ? "typewriter" : "paste",
                                        "engine": engineName])
         if configManager.typewriterMode {
-            // For Qwen/Apple (which can't stream partial), surface the final
-            // text in the overlay just before keystroke rollout so the user
-            // sees what's being typed.
-            if engineName != "volcano" {
-                RecordingOverlayPanel.shared.setStreamingText(processed)
-            }
+            // 浮窗只显示波形,不预览识别文字。它从松手一直留到这里,
+            // 键盘逐字键入完成后隐藏。
             await Task.detached(priority: .userInitiated) {
                 TextInjector.typeTextProgressive(processed)
             }.value
-            // Clear preview then hide — the bubble we held open through inject
-            // is no longer needed once the keystroke roll-out is done.
-            RecordingOverlayPanel.shared.setStreamingText("")
             RecordingOverlayPanel.shared.hide()
             ASRLogger.shared.event(.panelHidden, sessionID: session,
                                    props: ["reason": "typewriter_done"])
@@ -1673,8 +1653,8 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             }
         }
 
-        // Inject text. The overlay was hidden on key-release, but typewriter
-        // mode re-surfaces it via setStreamingText so the user sees the roll-out.
+        // Inject text. In typewriter mode the overlay (waveform only) was kept
+        // open since key-release; injectFinalText hides it once typing finishes.
         await injectFinalText(processedText, session: session, engineName: engineName)
         playEndSound()
 
