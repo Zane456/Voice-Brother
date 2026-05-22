@@ -72,7 +72,6 @@ enum MeetingState: Equatable {
 enum MeetingVideoQuality: String, CaseIterable, Identifiable, Codable {
     case original = "Original"
     case hd = "HD"
-    case sd = "SD"
 
     var id: String { rawValue }
 
@@ -80,7 +79,6 @@ enum MeetingVideoQuality: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .original: return "原画"
         case .hd: return "高清"
-        case .sd: return "标清"
         }
     }
 
@@ -90,7 +88,6 @@ enum MeetingVideoQuality: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .original: return nil
         case .hd: return 1080
-        case .sd: return 720
         }
     }
 
@@ -99,7 +96,6 @@ enum MeetingVideoQuality: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .original: return 20_000_000
         case .hd: return 10_000_000
-        case .sd: return 5_000_000
         }
     }
 }

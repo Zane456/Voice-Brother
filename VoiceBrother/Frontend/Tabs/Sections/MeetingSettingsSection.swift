@@ -11,7 +11,7 @@ struct MeetingSettingsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionHeader(title: "声音录制设置")
+            SectionHeader(title: "声音录制模型设置")
 
             // ASR Model — read-only mirror of voice input config
             asrModelCard

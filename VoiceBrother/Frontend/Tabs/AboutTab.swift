@@ -5,12 +5,16 @@ struct AboutTab: View {
     @EnvironmentObject private var configManager: ConfigManager
     @EnvironmentObject private var theme: ThemeManager
 
+    /// Jump to a sidebar page by its raw value — wired by MainWindow so each
+    /// 使用说明 row works as a shortcut to the page it describes.
+    var onNavigate: (String) -> Void
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 appInfoSection
-                dataFlowSection
                 usageSection
+                dataFlowSection
                 permissionsSection
                 refreshButton
             }
@@ -158,9 +162,15 @@ struct AboutTab: View {
                 .resizable()
                 .frame(width: 72, height: 72)
                 .clipShape(RoundedRectangle(cornerRadius: 16))
+                // Layered soft shadows lift the icon off the card: a tight
+                // contact shadow plus a wider ambient one read as real depth.
+                .shadow(color: .black.opacity(0.20), radius: 3, x: 0, y: 1)
+                .shadow(color: .black.opacity(0.16), radius: 12, x: 0, y: 7)
 
             Text("Voice Brother")
                 .font(.system(size: 22, weight: .bold))
+                // Subtle drop shadow gives the wordmark a slight raised emboss.
+                .shadow(color: .black.opacity(0.18), radius: 1.5, x: 0, y: 1)
 
             Text("版本 \(AboutTab.currentVersion)")
                 .font(.system(size: 13).monospacedDigit())
@@ -197,44 +207,69 @@ struct AboutTab: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(title: "使用说明")
 
+            // One row per *other* sidebar page, in sidebar order — the page
+            // hosting this section (关于) is omitted. The leading icon of each
+            // row is the exact SF Symbol used by that page's nav item (see
+            // MainWindow.AppTab.icon) so this section reads as a sidebar legend.
+            // All four desc strings are kept to exactly 20 full-width glyphs
+            // (CJK + 、 only, no Latin / spaces) so every row's secondary line
+            // is the same visual length.
             VStack(spacing: 0) {
                 instrRow(icon: "waveform", title: "语音输入",
-                         desc: "按住设定的触发键（默认右 ⌥）说话，松开后自动将语音转为文字并输入到当前光标位置")
+                         desc: "设置录音触发按键、识别模型与转写润色规则",
+                         tab: "语音")
                 Divider().padding(.horizontal, 16)
-                instrRow(icon: "record.circle", title: "长时录制",
-                         desc: "同时按住键盘左右两侧的 ⌘ 键 0.5 秒即可开始/结束长时录制")
+                instrRow(icon: "person.2.wave.2", title: "声音录制",
+                         desc: "配置长时录音识别模型、屏幕录制与内容摘要",
+                         tab: "声音录制")
                 Divider().padding(.horizontal, 16)
-                instrRow(icon: "keyboard", title: "取消录音",
-                         desc: "录音过程中按 ESC 键可取消本次语音输入")
+                instrRow(icon: "clock.arrow.circlepath", title: "历史记录",
+                         desc: "按日期查看、搜索与管理语音转写与录音记录",
+                         tab: "历史")
+                Divider().padding(.horizontal, 16)
+                instrRow(icon: "gearshape", title: "通用设置",
+                         desc: "调整输入行为、历史记录开关与文件保存路径",
+                         tab: "通用")
             }
             .glassCard()
         }
     }
 
-    private func instrRow(icon: String, title: String, desc: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(theme.accent)
-                .frame(width: 20)
+    private func instrRow(icon: String, title: String, desc: String, tab: String) -> some View {
+        // The row is a plain button: same visual as before, but the whole
+        // padded area is a click target that jumps to the page it describes.
+        Button {
+            onNavigate(tab)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(theme.accent)
+                    .frame(width: 20)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                Text(desc)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(desc)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                // Without this Spacer each HStack hugs its content; the parent
+                // VStack's default centring then leaves every row indented by a
+                // different amount. Mirror the dataFlowRow / permRow layout so
+                // every section in this tab is left-anchored.
+                Spacer(minLength: 0)
             }
-
-            // Without this Spacer each HStack hugs its content; the parent
-            // VStack's default centring then leaves every row indented by a
-            // different amount. Mirror the dataFlowRow / permRow layout so
-            // every section in this tab is left-anchored.
-            Spacer(minLength: 0)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
     }
 
     // MARK: - Permissions

@@ -6,18 +6,22 @@ struct MainWindow: View {
     @EnvironmentObject private var voiceService: VoiceService
     @EnvironmentObject private var theme: ThemeManager
 
-    @State private var selectedTab: AppTab = .voice
+    @State private var selectedTab: AppTab = .about
     @State private var showOnboarding = false
 
-    /// Tab order: voice-first matches the new-user mental model — the first thing
-    /// users want is to configure the trigger key and ASR engine, not generic
-    /// settings. About stays last as the reference / help anchor.
+    /// True while the main window chrome (not a text field) holds keyboard
+    /// focus — gates arrow-key tab navigation so it never fights text editing.
+    @FocusState private var windowFocused: Bool
+
+    /// Tab order: About sits first and is the launch page — it doubles as the
+    /// app's overview/home (version, page guide, data-flow, permissions), so
+    /// new users land on the map before diving into settings.
     private enum AppTab: String, CaseIterable {
+        case about = "关于"
         case voice = "语音"
         case meeting = "声音录制"
         case history = "历史"
         case general = "通用"
-        case about = "关于"
 
         var icon: String {
             switch self {
@@ -25,7 +29,7 @@ struct MainWindow: View {
             case .voice: return "waveform"
             case .meeting: return "person.2.wave.2"
             case .history: return "clock.arrow.circlepath"
-            case .about: return "info.circle"
+            case .about: return "house"
             }
         }
 
@@ -77,7 +81,7 @@ struct MainWindow: View {
                         case .history:
                             HistoryTab()
                         case .about:
-                            AboutTab()
+                            AboutTab(onNavigate: navigate(toRaw:))
                         }
                     }
                     // Silky page swap: `.id` gives each tab its own identity so
@@ -145,6 +149,20 @@ struct MainWindow: View {
         // renders purple/pink/etc. on users who changed it.
         .tint(theme.accent)
         .frame(minWidth: 560, minHeight: 600)
+        // Arrow-key sidebar navigation. The window chrome is focusable (ring
+        // hidden) so up/down can walk the tabs; the guard makes sure a focused
+        // text field keeps its own arrow-key cursor movement.
+        .focusable()
+        .focusEffectDisabled()
+        .focused($windowFocused)
+        .onMoveCommand { direction in
+            guard windowFocused else { return }
+            switch direction {
+            case .up: cycleTab(by: -1)
+            case .down: cycleTab(by: 1)
+            default: break
+            }
+        }
         .onAppear {
             // Only open onboarding when the user hasn't finished it yet.
             // After the user dismisses once (skip or complete), we switch to
@@ -155,6 +173,7 @@ struct MainWindow: View {
             } else if permissionManager.status.allGranted {
                 voiceService.start()
             }
+            windowFocused = true
         }
         .onChange(of: permissionManager.status) { newStatus in
             if newStatus.allGranted {
@@ -166,8 +185,11 @@ struct MainWindow: View {
             // the permission banner is the path back to the system settings.
         }
         .onChange(of: showOnboarding) { isShowing in
-            if !isShowing && voiceService.state == .stopped {
-                voiceService.start()
+            if !isShowing {
+                windowFocused = true
+                if voiceService.state == .stopped {
+                    voiceService.start()
+                }
             }
         }
         .sheet(isPresented: $showOnboarding) {
@@ -279,11 +301,39 @@ struct MainWindow: View {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(isSelected ? theme.sidebarSelectedBg : Color.clear)
                 )
+                // Hit target spans the full 56pt sidebar width and a taller
+                // 44pt row — the visible 40pt chip is unchanged, but the
+                // transparent margin around it is now clickable so taps no
+                // longer miss.
+                .frame(maxWidth: .infinity)
+                .frame(height: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusable(false)
         .accessibilityLabel(tab.accessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .help(tab.accessibilityLabel)
+    }
+
+    /// Jump straight to a tab by its raw value — used by the 关于 page's
+    /// sidebar legend so each usage row doubles as a shortcut to that page.
+    private func navigate(toRaw raw: String) {
+        guard let tab = AppTab(rawValue: raw) else { return }
+        withAnimation(.easeOut(duration: 0.22)) {
+            selectedTab = tab
+        }
+    }
+
+    /// Up/down arrow keys walk the sidebar. Clamped at both ends (no wrap) so
+    /// the selection can't silently jump from 关于 back to 语音.
+    private func cycleTab(by delta: Int) {
+        let tabs = AppTab.allCases
+        guard let idx = tabs.firstIndex(of: selectedTab) else { return }
+        let next = min(max(idx + delta, 0), tabs.count - 1)
+        guard next != idx else { return }
+        withAnimation(.easeOut(duration: 0.22)) {
+            selectedTab = tabs[next]
+        }
     }
 }

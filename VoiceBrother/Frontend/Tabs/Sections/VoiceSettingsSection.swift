@@ -34,6 +34,8 @@ struct VoiceSettingsSection: View {
             // Trigger Key
             triggerKeyCard
 
+            SectionHeader(title: "语音输入模型设置")
+
             // ASR Model Card
             asrModelCard
 

@@ -210,7 +210,7 @@ struct MeetingTab: View {
                 Text("录制清晰度")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(theme.textPrimary)
-                Text("原画最清晰、文件最大；标清最省空间")
+                Text("原画最清晰、文件最大；高清更省空间")
                     .font(.system(size: 11))
                     .foregroundColor(theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
