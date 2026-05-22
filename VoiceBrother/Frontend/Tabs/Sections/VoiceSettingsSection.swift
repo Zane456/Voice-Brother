@@ -469,11 +469,20 @@ struct VoiceSettingsSection: View {
 
             HStack(spacing: 10) {
                 Circle()
-                    .fill(configManager.cloudLLMEnabled ? theme.success : theme.border)
+                    .fill(llmStatusDotColor)
                     .frame(width: 8, height: 8)
-                Text(configManager.cloudLLMEnabled ? "已启用" : "未启用")
+                Text(llmStatusText)
                     .font(.system(size: 13))
-                    .foregroundColor(configManager.cloudLLMEnabled ? theme.success : theme.textSecondary)
+                    .foregroundColor(llmStatusTextColor)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if isLLMWarmupFailed {
+                    Button("重试") { voiceService.warmUpLLM() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.accent)
+                }
 
                 Spacer()
 
@@ -508,6 +517,43 @@ struct VoiceSettingsSection: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
+    }
+
+    // MARK: - LLM Connection Status
+
+    private var llmStatusText: String {
+        guard configManager.cloudLLMEnabled else { return "未启用" }
+        switch voiceService.llmWarmupState {
+        case .idle:       return "已启用"
+        case .connecting: return "连接中…"
+        case .ready:      return "已就绪"
+        case .failed(let msg): return msg.isEmpty ? "连接失败" : "连接失败：\(msg)"
+        }
+    }
+
+    private var llmStatusTextColor: Color {
+        guard configManager.cloudLLMEnabled else { return theme.textSecondary }
+        switch voiceService.llmWarmupState {
+        case .idle:       return theme.textSecondary
+        case .connecting: return theme.accent
+        case .ready:      return theme.success
+        case .failed:     return theme.stop
+        }
+    }
+
+    private var llmStatusDotColor: Color {
+        guard configManager.cloudLLMEnabled else { return theme.border }
+        switch voiceService.llmWarmupState {
+        case .idle:       return theme.border
+        case .connecting: return theme.accent
+        case .ready:      return theme.success
+        case .failed:     return theme.stop
+        }
+    }
+
+    private var isLLMWarmupFailed: Bool {
+        if case .failed = voiceService.llmWarmupState { return true }
+        return false
     }
 
     // MARK: - AI Polish Prompt

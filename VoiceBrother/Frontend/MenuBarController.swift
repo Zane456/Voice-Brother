@@ -211,9 +211,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let voiceLLMItem = NSMenuItem()
         voiceLLMItem.view = MenuLLMItemView(
             configManager: configManager,
+            voiceService: voiceService,
             keyPath: \.cloudLLMEnabled,
             icon: "brain",
             title: "AI 大模型 · 文本优化",
+            showsWarmup: true,
             width: Self.headerWidth
         )
         menu.addItem(voiceLLMItem)
@@ -221,9 +223,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let meetingLLMItem = NSMenuItem()
         meetingLLMItem.view = MenuLLMItemView(
             configManager: configManager,
+            voiceService: voiceService,
             keyPath: \.meetingLLMEnabled,
             icon: "brain",
             title: "AI 大模型 · 内容处理",
+            showsWarmup: false,
             width: Self.headerWidth
         )
         menu.addItem(meetingLLMItem)
@@ -408,15 +412,44 @@ private final class MenuRowHoverState: ObservableObject {
 private struct MenuLLMRow: View {
 
     @ObservedObject var configManager: ConfigManager
+    @ObservedObject var voiceService: VoiceService
     @ObservedObject var hover: MenuRowHoverState
     let icon: String
     let title: String
     let keyPath: ReferenceWritableKeyPath<ConfigManager, Bool>
+    /// Only the voice-input polish row mirrors the LLM connection warm-up; the
+    /// meeting row stays a plain enabled/disabled toggle.
+    let showsWarmup: Bool
     let width: CGFloat
 
     private let brandBlue = Color(red: 0x33 / 255, green: 0x9C / 255, blue: 0xFF / 255)
 
     private var isOn: Bool { configManager[keyPath: keyPath] }
+
+    /// Warm-up state to render — `.idle` for any row that doesn't track it,
+    /// which collapses the status line back to plain 已启用 / 未启用.
+    private var warmup: LLMWarmupState {
+        showsWarmup ? voiceService.llmWarmupState : .idle
+    }
+
+    private var statusText: String {
+        guard isOn else { return "未启用" }
+        switch warmup {
+        case .idle:       return "已启用"
+        case .connecting: return "连接中…"
+        case .ready:      return "已就绪"
+        case .failed:     return "连接失败"
+        }
+    }
+
+    private var statusDotColor: Color {
+        guard isOn else { return Color.secondary.opacity(0.5) }
+        switch warmup {
+        case .idle, .connecting: return brandBlue
+        case .ready:             return .green
+        case .failed:            return .red
+        }
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -432,9 +465,9 @@ private struct MenuLLMRow: View {
 
                 HStack(spacing: 5) {
                     Circle()
-                        .fill(isOn ? brandBlue : Color.secondary.opacity(0.5))
+                        .fill(statusDotColor)
                         .frame(width: 6, height: 6)
-                    Text(isOn ? "已启用" : "未启用")
+                    Text(statusText)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
@@ -484,14 +517,16 @@ private final class MenuLLMItemView: NSView {
     private var trackingArea: NSTrackingArea?
 
     init(configManager: ConfigManager,
+         voiceService: VoiceService,
          keyPath: ReferenceWritableKeyPath<ConfigManager, Bool>,
-         icon: String, title: String, width: CGFloat) {
+         icon: String, title: String, showsWarmup: Bool, width: CGFloat) {
         self.configManager = configManager
         self.keyPath = keyPath
         super.init(frame: .zero)
 
-        let row = MenuLLMRow(configManager: configManager, hover: hoverState,
-                             icon: icon, title: title, keyPath: keyPath, width: width)
+        let row = MenuLLMRow(configManager: configManager, voiceService: voiceService,
+                             hover: hoverState, icon: icon, title: title,
+                             keyPath: keyPath, showsWarmup: showsWarmup, width: width)
         let hosting = NSHostingView(rootView: row)
         hosting.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hosting)

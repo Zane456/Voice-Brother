@@ -9,6 +9,15 @@ import Foundation
 import Qwen3ASR
 import Speech
 
+/// Connection-warm-up state for the cloud text-polish LLM. Flipping the
+/// `cloudLLMEnabled` switch fires a ping so the TLS connection is pooled
+/// before the first real polish call; the settings card and the menu-bar
+/// LLM row both render this instead of a bare "已启用".
+enum LLMWarmupState: Equatable {
+    case idle, connecting, ready
+    case failed(String)
+}
+
 /// Main voice input lifecycle service.
 /// Manages ASR model loading, audio recording, transcription, and text injection.
 @MainActor
@@ -19,11 +28,16 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     @Published var state: ServiceState = .stopped
     @Published var downloadProgress: DownloadProgress?
     @Published var spaceReposition: Bool
+    /// Live cloud-LLM connection-warm-up state. Driven by `cloudLLMEnabled`
+    /// flipping on/off (see the subscription in `init`); read by the settings
+    /// card and the menu-bar LLM row.
+    @Published var llmWarmupState: LLMWarmupState = .idle
 
     // MARK: - Dependencies
 
     private let configManager: ConfigManager
     private let historyStore = HistoryStore()
+    private var llmWarmupCancellable: AnyCancellable?
 
     /// Callback to toggle meeting recording, set by the app after MeetingService is created.
     var meetingToggleAction: (() -> Void)?
@@ -291,6 +305,60 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     init(configManager: ConfigManager) {
         self.configManager = configManager
         self.spaceReposition = configManager.spaceReposition
+
+        // Warm the polish-LLM connection the moment `cloudLLMEnabled` turns on
+        // — and at launch if it's already on, since `@Published` replays its
+        // current value to a new subscriber. The first voice input then never
+        // pays the cold DNS/TLS handshake.
+        llmWarmupCancellable = configManager.appConfig.$cloudLLMEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if enabled { self.warmUpLLM() } else { self.llmWarmupState = .idle }
+                }
+            }
+    }
+
+    // MARK: - LLM Connection Warm-up
+
+    /// Fire a tiny ping so the TLS connection to the polish LLM is opened and
+    /// pooled in `URLSession.shared` before the first real polish call.
+    func warmUpLLM() {
+        guard configManager.cloudLLMEnabled else { return }
+        guard let provider = LLMProvider(rawValue: configManager.llmProvider),
+              provider != .none else {
+            llmWarmupState = .failed("未配置提供商")
+            return
+        }
+        let creds = configManager.llmCredentials[provider.rawValue] ?? ProviderCredentials()
+        if provider.requiresAPIKey,
+           creds.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            llmWarmupState = .failed("未配置 API Key")
+            return
+        }
+        llmWarmupState = .connecting
+        Task {
+            let client = LLMClient(provider: provider, credentials: creds,
+                                   userNotes: "", timeout: 20, maxTokens: 16)
+            do {
+                _ = try await client.call(
+                    systemPrompt: "连接预热，收到后只回复 ok。",
+                    userMessage: "ping")
+                // The switch may have flipped off mid-ping — don't resurrect a
+                // stale state on the UI.
+                if configManager.cloudLLMEnabled { llmWarmupState = .ready }
+            } catch {
+                if configManager.cloudLLMEnabled {
+                    llmWarmupState = .failed(Self.shortWarmupError(error))
+                }
+            }
+        }
+    }
+
+    private static func shortWarmupError(_ error: Error) -> String {
+        let raw = (error as? LLMError)?.errorDescription ?? error.localizedDescription
+        return raw.count > 40 ? String(raw.prefix(40)) + "…" : raw
     }
 
     // MARK: - VoiceServiceProtocol
@@ -642,6 +710,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             clearAudioChunks()
             tapFireCount = 0
             hasReceivedRealAudio = false  // gate that skips Bluetooth SCO warm-up zeros
+            streamingPeak = 0
             audioRecoveryAttempted = false
 
             // Start the audio engine FIRST. On Bluetooth the SCO link can take
@@ -1015,6 +1084,14 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// soft-spoken input.
     private let leadingSilenceRMSThreshold: Float = 0.001
 
+    /// Running peak used to drive a streaming-AGC view of the waveform. Mirrors
+    /// the batch AGC in `transcribeAndInject` (which scales the whole utterance
+    /// by `min(0.6 / peak, 40)`) so the bars reflect the level ASR will actually
+    /// receive — a built-in mic gets pulled up, AirPods stay natural, no
+    /// per-device tuning. Decays slowly so a transient pop can't suppress the
+    /// rest of the recording.
+    private var streamingPeak: Float = 0
+
     private func startAudioEngine() throws {
         // Engine reuse path: if a previous recording's keep-alive timer is still
         // holding the engine open (warm SCO link with AirPods, for example), reuse
@@ -1079,17 +1156,30 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             if let channelData = buffer.floatChannelData?[0] {
                 let frameLength = Int(buffer.frameLength)
                 var sum: Float = 0
+                var bufferPeak: Float = 0
                 for i in 0..<frameLength {
-                    sum += channelData[i] * channelData[i]
+                    let s = channelData[i]
+                    sum += s * s
+                    let a = abs(s)
+                    if a > bufferPeak { bufferPeak = a }
                 }
                 rawRMS = sqrtf(sum / Float(max(frameLength, 1)))
-                let dB = 20 * log10(max(rawRMS, 1e-6))
-                // Window calibrated for the *raw* mic signal (no VPIO/AGC in the
-                // path). Built-in mic speech sits around -55 ~ -40 dBFS, AirPods
-                // around -25 ~ -10. Mapping [-75, -30] → [0, 1] gives a visible
-                // jump for quiet built-in input without clipping AirPods to
-                // permanent max.
-                let normalized = max(Float(0), min(Float(1), (dB + 75) / 45))
+                // Streaming AGC — same shape as the batch AGC in
+                // transcribeAndInject (gain = min(0.6 / peak, 40)). Decay factor
+                // 0.995 per buffer ≈ 3 s half-life at typical buffer rates, so a
+                // transient pop doesn't lock the gain low for the rest of the
+                // utterance. The waveform now shows what ASR will actually hear.
+                self.streamingPeak = max(bufferPeak, self.streamingPeak * 0.995)
+                let gain: Float = self.streamingPeak > 0
+                    ? min(Float(0.6) / self.streamingPeak, Float(40))
+                    : 1
+                let gainedRMS = rawRMS * gain
+                let dB = 20 * log10(max(gainedRMS, 1e-6))
+                // Post-AGC window: speech RMS sits around -20 ~ -10 dBFS once the
+                // gain converges (peak pinned to 0.6 ≈ -4.4 dBFS, crest factor
+                // ~12-15 dB). Mapping [-50, -10] → [0, 1] keeps quiet gaps low
+                // and active speech filling most of the bar.
+                let normalized = max(Float(0), min(Float(1), (dB + 50) / 40))
                 // Freeze the waveform the moment the user releases the key,
                 // even though we keep capturing audio for the tail window.
                 // The user's "I'm done" gesture should produce immediate
