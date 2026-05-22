@@ -4,6 +4,10 @@ struct MeetingSettingsSection: View {
     @EnvironmentObject private var configManager: ConfigManager
     @EnvironmentObject private var meetingService: MeetingService
     @EnvironmentObject private var theme: ThemeManager
+    // Meeting LLM shares the voice provider/endpoint, so it reads `voiceService`'s
+    // single warm-up state rather than maintaining its own — see the status
+    // helpers below.
+    @EnvironmentObject private var voiceService: VoiceService
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -103,13 +107,22 @@ struct MeetingSettingsSection: View {
                 provenanceBadge(isCloud: true)  // Meeting LLM is always cloud — no local option.
             }
 
-            HStack(spacing: 6) {
+            HStack(spacing: 10) {
                 Circle()
-                    .fill(configManager.meetingLLMEnabled ? theme.accent : theme.textTertiary)
+                    .fill(meetingLLMStatusDotColor)
                     .frame(width: 8, height: 8)
-                Text(configManager.meetingLLMEnabled ? "已启用" : "未启用")
+                Text(meetingLLMStatusText)
                     .font(.system(size: 13))
-                    .foregroundColor(configManager.meetingLLMEnabled ? theme.accent : theme.textSecondary)
+                    .foregroundColor(meetingLLMStatusTextColor)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if isMeetingLLMWarmupFailed {
+                    Button("重试") { voiceService.warmUpLLM() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.accent)
+                }
 
                 Spacer()
 
@@ -147,6 +160,49 @@ struct MeetingSettingsSection: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
+    }
+
+    // MARK: - Meeting LLM Connection Status
+    //
+    // Meeting LLM shares the voice `llmProvider` / `llmCredentials` — same
+    // endpoint, same pooled TLS connection — so it renders `voiceService`'s
+    // single warm-up state. The 连接中/已就绪/连接失败 三态 + retry mirror the
+    // voice-input LLM card so both screens read identically.
+
+    private var meetingLLMStatusText: String {
+        guard configManager.meetingLLMEnabled else { return "未启用" }
+        switch voiceService.llmWarmupState {
+        case .idle:       return "已启用"
+        case .connecting: return "连接中…"
+        case .ready:      return "已就绪"
+        case .failed(let msg): return msg.isEmpty ? "连接失败" : "连接失败：\(msg)"
+        }
+    }
+
+    private var meetingLLMStatusTextColor: Color {
+        guard configManager.meetingLLMEnabled else { return theme.textSecondary }
+        switch voiceService.llmWarmupState {
+        case .idle:       return theme.textSecondary
+        case .connecting: return theme.accent
+        case .ready:      return theme.statusOK
+        case .failed:     return theme.statusFail
+        }
+    }
+
+    private var meetingLLMStatusDotColor: Color {
+        guard configManager.meetingLLMEnabled else { return theme.border }
+        switch voiceService.llmWarmupState {
+        case .idle:       return theme.border
+        case .connecting: return theme.accent
+        case .ready:      return theme.statusOK
+        case .failed:     return theme.statusFail
+        }
+    }
+
+    private var isMeetingLLMWarmupFailed: Bool {
+        guard configManager.meetingLLMEnabled else { return false }
+        if case .failed = voiceService.llmWarmupState { return true }
+        return false
     }
 
     // MARK: - Helpers

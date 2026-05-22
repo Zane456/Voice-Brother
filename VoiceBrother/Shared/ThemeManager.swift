@@ -179,6 +179,15 @@ final class ThemeManager: ObservableObject {
     var success: Color           { accent }
     var successBackground: Color { success.opacity(0.10) }
 
+    // Connection-status semantics. `statusOK` (已就绪 / 连接成功) reuses the
+    // brand blue so the palette stays calm — it's told apart from 连接中 / 已启用
+    // by copy, not hue. `statusFail` (连接失败) is the lone exception: an error
+    // must be unmissable. Used by every switch-plus-connection status dot
+    // (voice/meeting LLM, cloud/local ASR); the menu-bar LLM row can't see
+    // `ThemeManager` and hard-codes the same blue/red scheme itself.
+    var statusOK: Color   { accent }
+    var statusFail: Color { .red }
+
     var learningOrange: Color     { warning }
     var learningBackground: Color { warning.opacity(0.10) }
     var learningBorder: Color     { warning.opacity(0.25) }

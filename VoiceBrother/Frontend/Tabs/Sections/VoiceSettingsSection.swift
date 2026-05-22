@@ -301,16 +301,16 @@ struct VoiceSettingsSection: View {
 
     private var asrStatusDotColor: Color {
         switch voiceService.state {
-        case .ready, .recording, .transcribing: return theme.success
-        case .error: return theme.stop
+        case .ready, .recording, .transcribing: return theme.statusOK
+        case .error: return theme.statusFail
         default: return theme.border
         }
     }
 
     private var asrStatusTextColor: Color {
         switch voiceService.state {
-        case .ready, .recording, .transcribing: return theme.success
-        case .error: return theme.stop
+        case .ready, .recording, .transcribing: return theme.statusOK
+        case .error: return theme.statusFail
         default: return theme.textSecondary
         }
     }
@@ -418,11 +418,11 @@ struct VoiceSettingsSection: View {
 
             HStack(spacing: 10) {
                 Circle()
-                    .fill(asrModelLoaded ? theme.success : theme.border)
+                    .fill(asrStatusDotColor)
                     .frame(width: 8, height: 8)
                 Text(asrStatusText)
                     .font(.system(size: 13))
-                    .foregroundColor(asrModelLoaded ? theme.success : theme.textSecondary)
+                    .foregroundColor(asrStatusTextColor)
 
                 Spacer()
 
@@ -536,8 +536,8 @@ struct VoiceSettingsSection: View {
         switch voiceService.llmWarmupState {
         case .idle:       return theme.textSecondary
         case .connecting: return theme.accent
-        case .ready:      return theme.success
-        case .failed:     return theme.stop
+        case .ready:      return theme.statusOK
+        case .failed:     return theme.statusFail
         }
     }
 
@@ -546,8 +546,8 @@ struct VoiceSettingsSection: View {
         switch voiceService.llmWarmupState {
         case .idle:       return theme.border
         case .connecting: return theme.accent
-        case .ready:      return theme.success
-        case .failed:     return theme.stop
+        case .ready:      return theme.statusOK
+        case .failed:     return theme.statusFail
         }
     }
 

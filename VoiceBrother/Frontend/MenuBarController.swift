@@ -445,9 +445,8 @@ private struct MenuLLMRow: View {
     private var statusDotColor: Color {
         guard isOn else { return Color.secondary.opacity(0.5) }
         switch warmup {
-        case .idle, .connecting: return brandBlue
-        case .ready:             return .green
-        case .failed:            return .red
+        case .idle, .connecting, .ready: return brandBlue
+        case .failed:                    return .red
         }
     }
 

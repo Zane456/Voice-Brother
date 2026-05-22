@@ -306,18 +306,29 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         self.configManager = configManager
         self.spaceReposition = configManager.spaceReposition
 
-        // Warm the polish-LLM connection the moment `cloudLLMEnabled` turns on
-        // — and at launch if it's already on, since `@Published` replays its
-        // current value to a new subscriber. The first voice input then never
+        // Warm the polish-LLM connection the moment either consumer turns on —
+        // voice input (`cloudLLMEnabled`) or meeting summary (`meetingLLMEnabled`).
+        // Both share one provider/endpoint, so one pooled TLS connection and one
+        // warm-up state cover both. Fires at launch too, since `@Published`
+        // replays current values to a new subscriber. The first call then never
         // pays the cold DNS/TLS handshake.
         llmWarmupCancellable = configManager.appConfig.$cloudLLMEnabled
+            .combineLatest(configManager.appConfig.$meetingLLMEnabled)
+            .map { $0 || $1 }
             .removeDuplicates()
-            .sink { [weak self] enabled in
+            .sink { [weak self] anyEnabled in
                 Task { @MainActor in
                     guard let self else { return }
-                    if enabled { self.warmUpLLM() } else { self.llmWarmupState = .idle }
+                    if anyEnabled { self.warmUpLLM() } else { self.llmWarmupState = .idle }
                 }
             }
+    }
+
+    /// Either LLM consumer (voice polish or meeting summary) wants the cloud
+    /// connection alive — they share one provider/endpoint, so one warm-up
+    /// state serves both.
+    private var anyLLMEnabled: Bool {
+        configManager.cloudLLMEnabled || configManager.meetingLLMEnabled
     }
 
     // MARK: - LLM Connection Warm-up
@@ -325,7 +336,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// Fire a tiny ping so the TLS connection to the polish LLM is opened and
     /// pooled in `URLSession.shared` before the first real polish call.
     func warmUpLLM() {
-        guard configManager.cloudLLMEnabled else { return }
+        guard anyLLMEnabled else { return }
         guard let provider = LLMProvider(rawValue: configManager.llmProvider),
               provider != .none else {
             llmWarmupState = .failed("未配置提供商")
@@ -345,11 +356,11 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                 _ = try await client.call(
                     systemPrompt: "连接预热，收到后只回复 ok。",
                     userMessage: "ping")
-                // The switch may have flipped off mid-ping — don't resurrect a
-                // stale state on the UI.
-                if configManager.cloudLLMEnabled { llmWarmupState = .ready }
+                // Both switches may have flipped off mid-ping — don't resurrect
+                // a stale state on the UI.
+                if anyLLMEnabled { llmWarmupState = .ready }
             } catch {
-                if configManager.cloudLLMEnabled {
+                if anyLLMEnabled {
                     llmWarmupState = .failed(Self.shortWarmupError(error))
                 }
             }

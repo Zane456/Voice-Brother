@@ -177,11 +177,11 @@ struct LLMConfigCard: View {
         case .success(let msg):
             Label(msg, systemImage: "checkmark.circle.fill")
                 .font(.system(size: 12))
-                .foregroundColor(theme.success)
+                .foregroundColor(theme.statusOK)
         case .failure(let msg):
             Label(msg, systemImage: "xmark.circle.fill")
                 .font(.system(size: 12))
-                .foregroundColor(theme.stop)
+                .foregroundColor(theme.statusFail)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
