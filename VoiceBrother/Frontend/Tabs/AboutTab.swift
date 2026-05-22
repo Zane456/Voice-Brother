@@ -176,7 +176,7 @@ struct AboutTab: View {
                 .font(.system(size: 13).monospacedDigit())
                 .foregroundColor(theme.textSecondary)
 
-            Text("macOS 原生语音输入工具\n按住说话，松开输入")
+            Text("就是要成为最好用的语音输入软件")
                 .font(.system(size: 12))
                 .foregroundColor(theme.textTertiary)
                 .multilineTextAlignment(.center)
