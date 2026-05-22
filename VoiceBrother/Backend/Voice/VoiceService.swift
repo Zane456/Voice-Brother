@@ -174,6 +174,14 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// Per-recording flag so the fast-recovery rebuild only runs once.
     private var audioRecoveryAttempted = false
 
+    /// True while a cold engine start is in flight. `startAudioEngine()` now
+    /// awaits its CoreAudio HAL calls off the main thread (so a wedged
+    /// coreaudiod can't freeze the UI), which means it can suspend. This flag
+    /// serializes the cold-start path: a second key press / focus warm-up while
+    /// one start is still in flight is rejected rather than racing a second
+    /// `AVAudioEngine` onto the same microphone. Only touched on the main actor.
+    private var isStartingEngine = false
+
     /// Observer for `AVAudioEngineConfigurationChange`. Fires when the underlying
     /// audio device's config changes — typically when another app (WeChat, Zoom,
     /// etc.) ends a call and the system flips the input device back to its default
@@ -642,7 +650,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         focusObserver?.stop()
         let observer = FocusObserver()
         observer.onEditableFocused = { [weak self] in
-            Task { @MainActor in self?.engageFocusWarmUp() }
+            Task { @MainActor in await self?.engageFocusWarmUp() }
         }
         observer.onEditableUnfocused = { [weak self] in
             Task { @MainActor in self?.disengageFocusWarmUp() }
@@ -654,7 +662,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// Bring the audio engine up because the user is on a text-editable field.
     /// Idempotent — calling while already engaged just refreshes the keep-alive.
     /// No-op on built-in mic (no SCO cost to pay) or when the service isn't ready.
-    private func engageFocusWarmUp() {
+    private func engageFocusWarmUp() async {
         guard Self.isCurrentInputBluetooth() else { return }
         guard keyboardListenerRef?.isMeetingActive != true else { return }
         guard state == .ready else { return }
@@ -679,8 +687,26 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             return
         }
 
+        // Don't race a focus warm-up cold start against an in-flight engine
+        // start (a key press starting a real recording). Whoever got there
+        // first wins; this one bows out.
+        guard !isStartingEngine else {
+            debugLog("Focus warm-up: skipped — an engine start is already in flight")
+            isFocusWarmEngaged = false
+            return
+        }
+        isStartingEngine = true
+        defer { isStartingEngine = false }
         do {
-            try startAudioEngine()
+            try await startAudioEngine()
+            // A meeting may have grabbed the mic, or focus may have moved away,
+            // during the cold-start await — don't leave a resurrected engine.
+            guard isFocusWarmEngaged, keyboardListenerRef?.isMeetingActive != true else {
+                debugLog("Focus warm-up: state changed during cold start — releasing engine")
+                stopAudioEngineImmediately()
+                isFocusWarmEngaged = false
+                return
+            }
             debugLog("Focus warm-up: cold-started audio engine (text field focused)")
         } catch {
             debugLog("Focus warm-up: cold start FAILED: \(error)")
@@ -710,8 +736,8 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     }
 
     private func handleKeyPress() {
-        guard state == .ready else {
-            debugLog("handleKeyPress REJECTED: state=\(state.displayText), expected .ready")
+        guard state == .ready, !isRecording, !isStartingEngine else {
+            debugLog("handleKeyPress REJECTED: state=\(state.displayText), isRecording=\(isRecording), isStartingEngine=\(isStartingEngine)")
             ASRLogger.shared.event(.keyPress, sessionID: currentSessionID,
                                    props: ["rejected": true, "state": state.displayText])
             return
@@ -722,96 +748,113 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         ASRLogger.shared.event(.sessionBegin, sessionID: session,
                                props: ["bluetooth": Self.isCurrentInputBluetooth()])
 
-        do {
-            isRecording = true
-            clearAudioChunks()
-            tapFireCount = 0
-            hasReceivedRealAudio = false  // gate that skips Bluetooth SCO warm-up zeros
-            streamingPeak = 0
-            audioRecoveryAttempted = false
+        isRecording = true
+        clearAudioChunks()
+        tapFireCount = 0
+        hasReceivedRealAudio = false  // gate that skips Bluetooth SCO warm-up zeros
+        streamingPeak = 0
+        audioRecoveryAttempted = false
+        isStartingEngine = true
 
-            // Start the audio engine FIRST. On Bluetooth the SCO link can take
-            // 0.5–1.5s to come up, so every millisecond we save before this call
-            // is one millisecond of leading speech we don't lose. The frontmost-app
-            // capture below uses NSWorkspace which can take a few ms — we run it
-            // AFTER `startAudioEngine` so the SCO handshake starts as early as
-            // possible. Frontmost app at "press" vs "press + 5ms" is identical.
-            try startAudioEngine()
-            recordingAppContext = Self.captureFrontmostAppName()
-            recordingStartTime = Date()
-            state = .recording
-            debugLog("Recording started successfully, appContext=\(recordingAppContext ?? "nil")")
-            ASRLogger.shared.event(.recordingStarted, sessionID: session,
-                                   props: ["app": recordingAppContext ?? ""])
+        // `startAudioEngine()` awaits its CoreAudio HAL calls off the main
+        // thread (see that function). The rest of the start sequence — frontmost
+        // app, overlay, sound, timers — still runs only once the engine is
+        // actually up, in exactly the same order as before; the only difference
+        // is the UI no longer freezes while a slow coreaudiod settles.
+        Task { @MainActor in
+            defer { isStartingEngine = false }
+            do {
+                // Start the audio engine FIRST. On Bluetooth the SCO link can
+                // take 0.5–1.5s to come up, so every millisecond before this
+                // call is leading speech we don't lose.
+                try await startAudioEngine()
 
-            // Start cloud streaming if using VolcanoASREngine
-            if let volcEngine = asrEngine as? VolcanoASREngine {
-                volcEngine.beginStreaming(sampleRate: 16000, language: "Chinese")
-                // 渐进上屏不再在浮窗显示识别预览(只保留波形),所以不消费 partial。
-                volcEngine.onStreamingUpdate = nil
-            }
-
-            RecordingOverlayPanel.shared.show()
-            ASRLogger.shared.event(.panelPresentRecording, sessionID: session)
-            playStartSound()
-
-            // Safety timer: auto-stop after 120 seconds
-            safetyTimer?.invalidate()
-            safetyTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: false) { [weak self] _ in
-                Task { @MainActor in
-                    self?.handleKeyRelease()
+                // The user may have released the key, hit ESC, or started a
+                // meeting during the cold-start await. If this session is no
+                // longer the active one, tear the just-built engine down rather
+                // than resurrecting a recording that was already finalized.
+                guard currentSessionID == session, isRecording, !isCapturingTail else {
+                    debugLog("handleKeyPress: session no longer active after engine start — discarding engine")
+                    stopAudioEngineImmediately()
+                    return
                 }
-            }
 
-            // Audio health check: if no tap callback fired within the device-specific
-            // timeout, the mic is occupied by another app. Bluetooth needs a much
-            // longer window because AirPods sometimes take 2–3s to surface their
-            // first buffer after the SCO link comes up.
-            let sessionStart = recordingStartTime
-            let healthTimeout = audioHealthCheckTimeout
-            audioHealthCheckTimer?.invalidate()
-            audioHealthCheckTimer = Timer.scheduledTimer(withTimeInterval: healthTimeout, repeats: false) { [weak self] _ in
-                Task { @MainActor in
-                    guard let self else { return }
-                    guard self.isRecording, self.recordingStartTime == sessionStart else { return }
-                    guard self.tapFireCount == 0 else { return }
-                    self.debugLog("Audio health check FAILED: tapFireCount=0 after \(healthTimeout)s — aborting, mic likely occupied")
-                    self.abortRecordingWithMessage("麦克风无输入，可能被其他 app 占用")
+                recordingAppContext = Self.captureFrontmostAppName()
+                recordingStartTime = Date()
+                state = .recording
+                debugLog("Recording started successfully, appContext=\(recordingAppContext ?? "nil")")
+                ASRLogger.shared.event(.recordingStarted, sessionID: session,
+                                       props: ["app": recordingAppContext ?? ""])
+
+                // Start cloud streaming if using VolcanoASREngine
+                if let volcEngine = asrEngine as? VolcanoASREngine {
+                    volcEngine.beginStreaming(sampleRate: 16000, language: "Chinese")
+                    // 渐进上屏不再在浮窗显示识别预览(只保留波形),所以不消费 partial。
+                    volcEngine.onStreamingUpdate = nil
                 }
-            }
 
-            // Fast-recovery: try rebuilding the engine well before the hard abort.
-            // Covers the "started while WeChat was on a call" case — first engine
-            // sometimes latches onto a stale VoIP format and gets no samples; a
-            // fresh engine after the device settles often picks up cleanly.
-            let recoveryDelay = healthTimeout * 0.5
-            audioRecoveryTimer?.invalidate()
-            audioRecoveryTimer = Timer.scheduledTimer(withTimeInterval: recoveryDelay, repeats: false) { [weak self] _ in
-                Task { @MainActor in
-                    guard let self else { return }
-                    guard self.isRecording, self.recordingStartTime == sessionStart else { return }
-                    guard self.tapFireCount == 0, !self.audioRecoveryAttempted else { return }
-                    self.attemptAudioEngineRecovery(reason: "no audio after \(recoveryDelay)s")
+                RecordingOverlayPanel.shared.show()
+                ASRLogger.shared.event(.panelPresentRecording, sessionID: session)
+                playStartSound()
+
+                // Safety timer: auto-stop after 120 seconds
+                safetyTimer?.invalidate()
+                safetyTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: false) { [weak self] _ in
+                    Task { @MainActor in
+                        self?.handleKeyRelease()
+                    }
                 }
-            }
 
-        } catch {
-            debugLog("FAILED to start audio engine: \(error)")
-            print("[VoiceService] Failed to start audio engine: \(error)")
-            ASRLogger.shared.event(.asrFailed, sessionID: session,
-                                   props: ["stage": "audio_engine_start",
-                                           "error": "\(error)"])
-            // Fully reset state so subsequent key presses can start a new
-            // recording. Without this the next handleKeyPress would go through
-            // (state == .ready) but handleKeyRelease would be triggered on a
-            // stale isRecording=true flag, causing the release path to run on
-            // an engine that never started.
-            isRecording = false
-            recordingAppContext = nil
-            tapFireCount = 0
-            safetyTimer?.invalidate()
-            safetyTimer = nil
-            state = .ready
+                // Audio health check: if no tap callback fired within the device-specific
+                // timeout, the mic is occupied by another app. Bluetooth needs a much
+                // longer window because AirPods sometimes take 2–3s to surface their
+                // first buffer after the SCO link comes up.
+                let sessionStart = recordingStartTime
+                let healthTimeout = audioHealthCheckTimeout
+                audioHealthCheckTimer?.invalidate()
+                audioHealthCheckTimer = Timer.scheduledTimer(withTimeInterval: healthTimeout, repeats: false) { [weak self] _ in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        guard self.isRecording, self.recordingStartTime == sessionStart else { return }
+                        guard self.tapFireCount == 0 else { return }
+                        self.debugLog("Audio health check FAILED: tapFireCount=0 after \(healthTimeout)s — aborting, mic likely occupied")
+                        self.abortRecordingWithMessage("麦克风无输入，可能被其他 app 占用")
+                    }
+                }
+
+                // Fast-recovery: try rebuilding the engine well before the hard abort.
+                // Covers the "started while WeChat was on a call" case — first engine
+                // sometimes latches onto a stale VoIP format and gets no samples; a
+                // fresh engine after the device settles often picks up cleanly.
+                let recoveryDelay = healthTimeout * 0.5
+                audioRecoveryTimer?.invalidate()
+                audioRecoveryTimer = Timer.scheduledTimer(withTimeInterval: recoveryDelay, repeats: false) { [weak self] _ in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        guard self.isRecording, self.recordingStartTime == sessionStart else { return }
+                        guard self.tapFireCount == 0, !self.audioRecoveryAttempted else { return }
+                        await self.attemptAudioEngineRecovery(reason: "no audio after \(recoveryDelay)s")
+                    }
+                }
+
+            } catch {
+                debugLog("FAILED to start audio engine: \(error)")
+                print("[VoiceService] Failed to start audio engine: \(error)")
+                ASRLogger.shared.event(.asrFailed, sessionID: session,
+                                       props: ["stage": "audio_engine_start",
+                                               "error": "\(error)"])
+                // Fully reset state so subsequent key presses can start a new
+                // recording. Without this the next handleKeyPress would go through
+                // (state == .ready) but handleKeyRelease would be triggered on a
+                // stale isRecording=true flag, causing the release path to run on
+                // an engine that never started.
+                isRecording = false
+                recordingAppContext = nil
+                tapFireCount = 0
+                safetyTimer?.invalidate()
+                safetyTimer = nil
+                state = .ready
+            }
         }
     }
 
@@ -1040,13 +1083,17 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         Task { @MainActor in
             do {
                 let engine = AVAudioEngine()
-                let inputNode = engine.inputNode
 
-                let format = inputNode.outputFormat(forBus: 0)
+                // Same off-main HAL handling as startAudioEngine — pre-warm must
+                // never freeze the UI either (it runs at launch and after each
+                // keep-alive expiry).
+                let format: AVAudioFormat = await Task.detached(priority: .userInitiated) {
+                    engine.inputNode.outputFormat(forBus: 0)
+                }.value
                 guard format.sampleRate > 0 else { return }
 
-                inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { _, _ in }
-                try engine.start()
+                engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { _, _ in }
+                try await Task.detached(priority: .userInitiated) { try engine.start() }.value
 
                 DispatchQueue.main.asyncAfter(deadline: .now() + warmDuration) {
                     // Stop before removeTap — see stopAudioEngineImmediately().
@@ -1096,7 +1143,13 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// rest of the recording.
     private var streamingPeak: Float = 0
 
-    private func startAudioEngine() throws {
+    /// Cold-starts (or reuses) the capture engine. The CoreAudio HAL queries it
+    /// issues — the first `inputNode` access and `engine.start()` — can block on
+    /// a synchronous `mach_msg` to coreaudiod for tens of seconds when the audio
+    /// daemon is busy. Those two calls run on a detached task so the main actor
+    /// stays responsive while the device/daemon settles; everything else stays
+    /// on the main actor so the (unchanged) tap closure keeps its isolation.
+    private func startAudioEngine() async throws {
         // Engine reuse path: if a previous recording's keep-alive timer is still
         // holding the engine open (warm SCO link with AirPods, for example), reuse
         // it instead of paying the cold-start cost again.
@@ -1114,9 +1167,15 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         stopAudioEngineImmediately()
 
         let engine = AVAudioEngine()
-        let inputNode = engine.inputNode
 
-        let format = inputNode.outputFormat(forBus: 0)
+        // First `inputNode` access triggers AVAudioEngine's UpdateInputNode →
+        // CoreAudio HAL GetHWFormat, a synchronous mach_msg to coreaudiod. Run
+        // it off the main thread: a slow/wedged coreaudiod then merely delays
+        // the recording instead of freezing the whole UI for tens of seconds.
+        let format: AVAudioFormat = await Task.detached(priority: .userInitiated) {
+            engine.inputNode.outputFormat(forBus: 0)
+        }.value
+        let inputNode = engine.inputNode
         debugLog("Audio format: sampleRate=\(format.sampleRate), channels=\(format.channelCount), bits=\(format.streamDescription.pointee.mBitsPerChannel), bluetooth=\(Self.isCurrentInputBluetooth())")
 
         // Validate format — on macOS cold start, sampleRate can be 0
@@ -1262,7 +1321,10 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             }
         }
 
-        try engine.start()
+        // engine.start() spins up the CoreAudio IO thread — also a synchronous
+        // HAL round-trip that can stall on a busy coreaudiod. Off the main
+        // thread for the same reason as the inputNode query above.
+        try await Task.detached(priority: .userInitiated) { try engine.start() }.value
         self.audioEngine = engine
 
         // Listen for configuration changes (e.g. WeChat ends a call → device flips
@@ -1279,7 +1341,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             Task { @MainActor in
                 guard let self else { return }
                 guard self.isRecording else { return }
-                self.attemptAudioEngineRecovery(reason: "AVAudioEngineConfigurationChange (device format changed mid-recording)")
+                await self.attemptAudioEngineRecovery(reason: "AVAudioEngineConfigurationChange (device format changed mid-recording)")
             }
         }
     }
@@ -1288,7 +1350,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// when the first engine failed to deliver any samples (mic was occupied at
     /// startup) and as a recovery from `AVAudioEngineConfigurationChange` (another
     /// app released the device mid-recording, system flipped formats).
-    private func attemptAudioEngineRecovery(reason: String) {
+    private func attemptAudioEngineRecovery(reason: String) async {
         guard isRecording else { return }
         ASRLogger.shared.event(.audioEngineRecoveryAttempt, sessionID: currentSessionID,
                                props: ["reason": reason,
@@ -1301,7 +1363,14 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         debugLog("Audio engine recovery: rebuilding engine — \(reason)")
         stopAudioEngineImmediately()
         do {
-            try startAudioEngine()
+            try await startAudioEngine()
+            // The recording may have ended (key release / ESC / meeting) during
+            // the rebuild's cold-start await — don't leave a resurrected engine.
+            guard isRecording else {
+                debugLog("Audio engine recovery: recording ended during rebuild — releasing engine")
+                stopAudioEngineImmediately()
+                return
+            }
             debugLog("Audio engine recovery: rebuild succeeded")
         } catch {
             debugLog("Audio engine recovery: rebuild FAILED: \(error) — health check will abort if still no audio")
