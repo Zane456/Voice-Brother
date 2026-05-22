@@ -50,7 +50,19 @@ final class CorrectionLearningEngine {
     /// a failure simply means nothing was learned.
     @discardableResult
     func learn(originalText: String, correctedText: String, bundleID: String = "") -> LearnResult {
+        // Record every correction attempt that reaches the engine, so the
+        // journal always shows whether learning succeeded — and if not, why.
+        journal.log("EDIT    收到编辑 \"\(originalText.prefix(40))\" → \"\(correctedText.prefix(40))\"")
+
+        // Pre-migration history record with no raw ASR text — there is nothing
+        // reliable to diff against, so this edit cannot be learned.
+        guard !originalText.isEmpty else {
+            journal.log("SKIP    该记录无原始 ASR 文本（旧记录），无法学习")
+            return LearnResult(learned: false, from: "", to: "", message: "")
+        }
+
         guard let pair = CorrectionDiff.extract(original: originalText, corrected: correctedText) else {
+            journal.log("SKIP    编辑无法提炼成规则（无改动 / 纯增删 / 整句重写 / 跨度过短或过长）")
             return LearnResult(learned: false, from: "", to: "", message: "")
         }
 

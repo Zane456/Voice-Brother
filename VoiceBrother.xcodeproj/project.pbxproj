@@ -41,6 +41,7 @@
 		8F31BD1B02E840A2A7B9A999 /* VoiceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A468074BF22557328BEC1B4 /* VoiceService.swift */; };
 		8F8B6F3327B6E348A296A00A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 64834C7163F197FF57940D43 /* Assets.xcassets */; };
 		91D0487A66F229A16D72E978 /* ColorExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F431F2DCA8289BBAA7EE4CC /* ColorExtension.swift */; };
+		FE01AA01FE01AA01FE01AA01 /* OverlayScroller.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE02BB02FE02BB02FE02BB02 /* OverlayScroller.swift */; };
 		9380371B5F84CC1B86A759A8 /* Qwen3ASR in Frameworks */ = {isa = PBXBuildFile; productRef = 46F79E3B77595AD3DD93C2B1 /* Qwen3ASR */; };
 		942DCBF1E3E686711E4FA217 /* MeetingScreenRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67C06316E9322C08FC4F3533 /* MeetingScreenRecorder.swift */; };
 		979F924204BCA0BA3B2191A9 /* SpeechVAD in Frameworks */ = {isa = PBXBuildFile; productRef = 55B3D80DBA09BE97B6544F8D /* SpeechVAD */; };
@@ -91,6 +92,7 @@
 		19511C2932D8583DCD624991 /* SettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTab.swift; sourceTree = "<group>"; };
 		1A26C1BF02BFFC43A9CC9F1B /* MeetingRetranscribeLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingRetranscribeLauncher.swift; sourceTree = "<group>"; };
 		1F431F2DCA8289BBAA7EE4CC /* ColorExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorExtension.swift; sourceTree = "<group>"; };
+		FE02BB02FE02BB02FE02BB02 /* OverlayScroller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayScroller.swift; sourceTree = "<group>"; };
 		257C633BC36CFFA60F44CF29 /* Spacing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Spacing.swift; sourceTree = "<group>"; };
 		280A44D90E387302862FA480 /* HistoryManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryManager.swift; sourceTree = "<group>"; };
 		2EEF5D13BFC6B8890EB2C48A /* CorrectionDiff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorrectionDiff.swift; sourceTree = "<group>"; };
@@ -260,6 +262,7 @@
 				EC1EE7FA17B723F54C061665 /* FlowLayout.swift */,
 				A91E02C327C1271FC673E338 /* LLMConfigCard.swift */,
 				F0726936CE6B318E74B30739 /* MonoTextExtension.swift */,
+				FE02BB02FE02BB02FE02BB02 /* OverlayScroller.swift */,
 				F25F933AFF3A8EA8D1D5DB8A /* RecordingOverlayPanel.swift */,
 				EC4BF1F6964D573B5D8417F2 /* RecordingWaveformView.swift */,
 				A74DA61B5963550F86BFF31A /* SectionHeader.swift */,
@@ -440,6 +443,7 @@
 				AA950AF155F08BC30A56C078 /* CodexBadge.swift in Sources */,
 				FA5C9A99D84709247E94A592 /* CodexButtonStyles.swift in Sources */,
 				91D0487A66F229A16D72E978 /* ColorExtension.swift in Sources */,
+				FE01AA01FE01AA01FE01AA01 /* OverlayScroller.swift in Sources */,
 				753F2471B39519FE269527DF /* ConfigManager.swift in Sources */,
 				2D02DB597BCBE49CD6AE24F2 /* CorrectionDiff.swift in Sources */,
 				D71A8CE1641AA98200A0127E /* CorrectionLearningEngine.swift in Sources */,

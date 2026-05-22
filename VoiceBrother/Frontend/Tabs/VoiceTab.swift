@@ -20,6 +20,7 @@ struct VoiceTab: View {
                 VoiceSettingsSection()
                     .padding(.horizontal, 32)
                     .padding(.bottom, 32)
+                    .installOverlayScroller()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -30,15 +30,19 @@ actor HistoryStore {
                 duration_seconds REAL,
                 text TEXT NOT NULL,
                 character_count INTEGER,
-                raw_text TEXT
+                raw_text TEXT,
+                model TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_created_at ON transcription_history(created_at DESC);
             """
             sqlite3_exec(db, sql, nil, nil, nil)
-            // Migration for DBs created before raw_text existed. ALTER TABLE
-            // errors if the column already exists — sqlite3_exec swallows it,
-            // which is exactly what we want here.
+            // Migrations for DBs created before these columns existed. ALTER
+            // TABLE errors if the column already exists — sqlite3_exec swallows
+            // it, which is exactly what we want here. Both columns are appended
+            // last, so fetchAll's positional indices stay stable: raw_text=5,
+            // model=6, regardless of whether the DB is fresh or migrated.
             sqlite3_exec(db, "ALTER TABLE transcription_history ADD COLUMN raw_text TEXT;", nil, nil, nil)
+            sqlite3_exec(db, "ALTER TABLE transcription_history ADD COLUMN model TEXT;", nil, nil, nil)
             pruneOldRecords()
         }
     }
@@ -52,8 +56,8 @@ actor HistoryStore {
     func insert(_ record: TranscriptionRecord) {
         let sql = """
         INSERT OR REPLACE INTO transcription_history
-        (id, created_at, duration_seconds, text, character_count, raw_text)
-        VALUES (?, ?, ?, ?, ?, ?);
+        (id, created_at, duration_seconds, text, character_count, raw_text, model)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
@@ -68,6 +72,11 @@ actor HistoryStore {
             bind(stmt, 6, raw)
         } else {
             sqlite3_bind_null(stmt, 6)
+        }
+        if let model = record.model {
+            bind(stmt, 7, model)
+        } else {
+            sqlite3_bind_null(stmt, 7)
         }
 
         if sqlite3_step(stmt) == SQLITE_DONE {
@@ -88,14 +97,19 @@ actor HistoryStore {
 
         var records: [TranscriptionRecord] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
+            // raw_text / model are nullable — sqlite3_column_text returns NULL
+            // for them, which String(cString:) cannot take, so map the pointer.
             let rawPtr = sqlite3_column_text(stmt, 5)
             let rawText: String? = rawPtr.map { String(cString: $0) }
+            let modelPtr = sqlite3_column_text(stmt, 6)
+            let model: String? = modelPtr.map { String(cString: $0) }
             records.append(TranscriptionRecord(
                 id: UUID(uuidString: column(stmt, 0)) ?? UUID(),
                 timestamp: iso.date(from: column(stmt, 1)) ?? Date(),
                 text: column(stmt, 3),
                 duration: sqlite3_column_double(stmt, 2),
-                rawText: rawText
+                rawText: rawText,
+                model: model
             ))
         }
         return records

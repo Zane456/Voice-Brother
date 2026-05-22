@@ -332,17 +332,22 @@ struct TranscriptionRecord: Identifiable, Codable, Equatable {
     /// rather than real ASR errors. Nullable for records saved before this
     /// field existed; History disables learning when nil.
     let rawText: String?
+    /// ASR model that produced this transcription, e.g. "Qwen3-ASR-0.6B",
+    /// "Apple Speech", "云端·火山引擎 ASR". Recorded for diagnostics — not
+    /// shown in the History UI. Nullable for records saved before this field.
+    let model: String?
 
-    init(id: UUID = UUID(), timestamp: Date = Date(), text: String, duration: Double = 0, rawText: String? = nil) {
+    init(id: UUID = UUID(), timestamp: Date = Date(), text: String, duration: Double = 0, rawText: String? = nil, model: String? = nil) {
         self.id = id
         self.timestamp = timestamp
         self.text = text
         self.duration = duration
         self.rawText = rawText
+        self.model = model
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, timestamp, text, duration, rawText
+        case id, timestamp, text, duration, rawText, model
     }
 
     init(from decoder: Decoder) throws {
@@ -352,6 +357,7 @@ struct TranscriptionRecord: Identifiable, Codable, Equatable {
         text = try c.decode(String.self, forKey: .text)
         duration = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
         rawText = try c.decodeIfPresent(String.self, forKey: .rawText)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
     }
 }
 

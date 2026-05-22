@@ -226,7 +226,8 @@ struct VoiceHistoryView: View {
     /// Diff source: `record.rawText` (raw ASR) ↔ user's edit. Diffing the
     /// already-processed `record.text` would teach rules that chase LLM polish
     /// artefacts instead of real ASR mistakes. For pre-migration records
-    /// (rawText == nil) we still save the edit but skip learning entirely.
+    /// (rawText == nil) the edit is still saved and still routed to the engine,
+    /// which logs the skip — so the journal has an entry for every attempt.
     private func saveEdit(_ record: TranscriptionRecord) {
         let displayed = record.text
         let newText = editText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -236,7 +237,7 @@ struct VoiceHistoryView: View {
             let updated = TranscriptionRecord(
                 id: record.id, timestamp: record.timestamp,
                 text: newText, duration: record.duration,
-                rawText: record.rawText
+                rawText: record.rawText, model: record.model
             )
             await historyStore.insert(updated)
 

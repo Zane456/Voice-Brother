@@ -45,6 +45,9 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     // MARK: - Internal State
 
     private(set) var asrEngine: (any ASREngineProtocol)?
+    /// Human-readable label of the ASR model behind the live engine, copied
+    /// into every history record for diagnostics. Set when an engine starts.
+    private(set) var loadedModelLabel: String = ""
     private var keyboardListener: KeyboardListener?
     private var audioEngine: AVAudioEngine?
 
@@ -440,6 +443,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         }
 
         self.asrEngine = engine
+        loadedModelLabel = ASRModel.apple.fullName
         state = .ready
         startKeyboardListener()
         prewarmAudioEngine()
@@ -465,6 +469,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         guard !Task.isCancelled else { return }
 
         self.asrEngine = QwenASREngine(model: qwenModel)
+        loadedModelLabel = model.fullName
         state = .ready
         debugLog("startQwenASR ready (state=.ready)")
         startKeyboardListener()
@@ -546,6 +551,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             return
         }
 
+        loadedModelLabel = "云端·" + provider.displayName
         state = .ready
         startKeyboardListener()
         prewarmAudioEngine()
@@ -1435,7 +1441,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         // Keep raw ASR alongside processed output — the self-learning engine
         // diffs (raw → user edit) so it learns ASR mistakes, not LLM polish.
-        let record = TranscriptionRecord(text: processedText, duration: duration, rawText: text)
+        let record = TranscriptionRecord(text: processedText, duration: duration, rawText: text, model: loadedModelLabel)
         Task { await historyStore.insert(record) }
         // Voice input just completed — History tab opens on this segment next.
         configManager.lastHistoryKind = "voice"
@@ -1661,7 +1667,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         // Record to history (keep raw ASR alongside processed output so the
         // self-learning engine has a real "before" side for diffing).
         let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
-        let record = TranscriptionRecord(text: processedText, duration: duration, rawText: text)
+        let record = TranscriptionRecord(text: processedText, duration: duration, rawText: text, model: loadedModelLabel)
         Task { await historyStore.insert(record) }
         // Voice input just completed — History tab opens on this segment next.
         configManager.lastHistoryKind = "voice"
