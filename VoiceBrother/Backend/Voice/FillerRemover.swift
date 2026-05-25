@@ -118,6 +118,25 @@ enum FillerRemover {
         // "其实" — only remove "其实" at the very start (filler usage)
         result = replacePattern(result, pattern: "^其实[，,]?", with: "")
 
+        // 单字"啊" — context-aware：仅删贴着标点的（filler 用法），
+        // 保留夹在字中间的（"漂亮啊"/"哎呀"中的"啊"是真感叹/复合词）。
+        result = removeStandaloneA(from: result)
+
+        return result
+    }
+
+    /// Remove standalone filler "啊" only when it's adjacent to punctuation or at
+    /// the start of input — typical filler positions like "啊，xxx" / "xxx啊，" /
+    /// "xxx啊？". A trailing "啊" with no punctuation is kept (e.g. "漂亮啊"),
+    /// since it's likely a legitimate sentence-final modal particle.
+    private static func removeStandaloneA(from text: String) -> String {
+        var result = text
+        // 1. "啊"前贴着标点："，啊xxx" → "，xxx"
+        result = replacePattern(result, pattern: "([，,。.！!？?；;])啊", with: "$1")
+        // 2. "啊"后贴着标点："xxx啊，" → "xxx，"，含句末"啊。/啊？/啊！"
+        result = replacePattern(result, pattern: "啊([，,。.！!？?；;])", with: "$1")
+        // 3. 字符串开头的"啊"（可能后接逗号或空白）："啊，xxx" → "xxx"
+        result = replacePattern(result, pattern: "^啊[，,]?[\\s]*", with: "")
         return result
     }
 
