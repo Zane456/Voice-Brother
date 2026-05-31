@@ -618,15 +618,10 @@ struct VoiceSettingsSection: View {
                 .disabled(configManager.localLLMNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
-            Text("需在上方启动 AI 模型后生效。语音转写完成后，模型会根据以下要求对文本进行润色。留空则使用默认优化（补充标点、修正口语表达）。")
-                .font(.system(size: 12))
-                .foregroundColor(theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $configManager.localLLMNotes)
                     .font(.system(size: 12))
-                    .frame(maxWidth: .infinity, minHeight: 56, maxHeight: 80)
+                    .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 110)
                     .padding(4)
                     .background(theme.inputBackground)
                     .cornerRadius(8)
@@ -635,12 +630,16 @@ struct VoiceSettingsSection: View {
                             .stroke(theme.border, lineWidth: 1)
                     )
 
+                // Placeholder 即说明——输入框留空时显示完整 hint，开始输入后自动消失。
+                // 把"功能介绍"和"使用提示"合并到 placeholder，避免上方再多一段静态说明文字
+                // 浪费视觉空间（用户大概率留空，所以 placeholder 总能看到）。
                 if configManager.localLLMNotes.isEmpty {
-                    Text("点击「应用预设」选一个开始，或自定义后点「存为预设」保存。")
+                    Text("留空即可（推荐）——已自动做同音字纠正、标点断句、删口吃、中英大小写规范。\n仅当你想改变文本风格（如改写为公众号 / 小红书 / 正式邮件）时再填，或点右上「应用预设」选一个。")
                         .font(.system(size: 12))
                         .foregroundColor(theme.textPlaceholder)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 13)
+                        .fixedSize(horizontal: false, vertical: true)
                         .allowsHitTesting(false)
                 }
             }

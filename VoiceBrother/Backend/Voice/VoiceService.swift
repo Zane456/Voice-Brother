@@ -48,6 +48,18 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// Human-readable label of the ASR model behind the live engine, copied
     /// into every history record for diagnostics. Set when an engine starts.
     private(set) var loadedModelLabel: String = ""
+
+    /// In-flight Qwen transcribe task — kept so we can abandon it if MLX wedges
+    /// on the first inference after a long idle (the GPU command buffer can
+    /// stall when 2+ GB of weights are paged back in). Cancelling the wrapper
+    /// won't actually interrupt the synchronous MLX call, but it lets the UI
+    /// stop waiting on it and avoids stale results overwriting fresh state
+    /// when the user reloads the model to recover.
+    private var currentTranscribeTask: Task<String, Never>?
+    /// Hard ceiling on a single transcribe call before we surface "timeout"
+    /// to the user. Normal latency is well under 1 s even on the 1.7B model;
+    /// 15 s gives a generous margin for legitimate post-idle slow paths.
+    private static let transcribeTimeoutSeconds: UInt64 = 15
     private var keyboardListener: KeyboardListener?
     private var audioEngine: AVAudioEngine?
 
@@ -85,7 +97,21 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     private static let tailCaptureMillis: UInt64 = 150
 
     /// Diagnostic: count of audio tap callbacks received during current recording.
-    private var tapFireCount: Int = 0
+    /// Incremented from the CoreAudio IO thread (tap callback) and read/reset
+    /// from the main actor (health-check timer), so all access goes through a
+    /// lock — without it the `+= 1` read-modify-write races the main-actor reset
+    /// and the "mic occupied" health check can observe a torn/stale value.
+    private let tapFireCountLock = NSLock()
+    private var _tapFireCount: Int = 0
+    private var tapFireCount: Int {
+        get { tapFireCountLock.withLock { _tapFireCount } }
+        set { tapFireCountLock.withLock { _tapFireCount = newValue } }
+    }
+    /// Atomic increment for the tap callback — the computed-property setter would
+    /// take the lock twice (get then set), reopening the race.
+    private func incrementTapFireCount() {
+        tapFireCountLock.withLock { _tapFireCount += 1 }
+    }
 
     /// Thread-safe swap of audioChunks, returning current contents.
     private func swapAudioChunks() -> [Data] {
@@ -460,6 +486,17 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     private func startQwenASR(model: ASRModel) async throws {
         let hfId = model.huggingFaceId
 
+        // If a previous transcribe is still in flight (e.g. MLX wedged on the
+        // first inference after long idle and the user is reloading to recover),
+        // abandon it so its stale result can't overwrite the fresh UI state
+        // and the panel returns to a clean baseline immediately.
+        if currentTranscribeTask != nil {
+            debugLog("startQwenASR: abandoning in-flight transcribe task before reload")
+            currentTranscribeTask?.cancel()
+            currentTranscribeTask = nil
+            RecordingOverlayPanel.shared.hide()
+        }
+
         state = .downloading
         let t0 = Date()
         debugLog("startQwenASR begin: model=\(hfId)")
@@ -709,7 +746,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             }
             debugLog("Focus warm-up: cold-started audio engine (text field focused)")
         } catch {
-            debugLog("Focus warm-up: cold start FAILED: \(error)")
+            debugWarn("Focus warm-up: cold start FAILED: \(error)")
             isFocusWarmEngaged = false
         }
     }
@@ -817,7 +854,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                         guard let self else { return }
                         guard self.isRecording, self.recordingStartTime == sessionStart else { return }
                         guard self.tapFireCount == 0 else { return }
-                        self.debugLog("Audio health check FAILED: tapFireCount=0 after \(healthTimeout)s — aborting, mic likely occupied")
+                        self.debugError("Audio health check FAILED: tapFireCount=0 after \(healthTimeout)s — aborting, mic likely occupied")
                         self.abortRecordingWithMessage("麦克风无输入，可能被其他 app 占用")
                     }
                 }
@@ -838,7 +875,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                 }
 
             } catch {
-                debugLog("FAILED to start audio engine: \(error)")
+                debugError("FAILED to start audio engine: \(error)")
                 print("[VoiceService] Failed to start audio engine: \(error)")
                 ASRLogger.shared.event(.asrFailed, sessionID: session,
                                        props: ["stage": "audio_engine_start",
@@ -1101,7 +1138,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                     engine.inputNode.removeTap(onBus: 0)
                 }
             } catch {
-                debugLog("Audio pre-warm failed (non-fatal): \(error)")
+                debugWarn("Audio pre-warm failed (non-fatal): \(error)")
             }
         }
     }
@@ -1211,7 +1248,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         // Capture targetFormat and converter for the tap closure
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             guard let self = self else { return }
-            self.tapFireCount += 1
+            self.incrementTapFireCount()
             guard self.isRecording else { return }
 
             // Compute RMS audio level from raw buffer for waveform animation + leading-silence detection
@@ -1373,7 +1410,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             }
             debugLog("Audio engine recovery: rebuild succeeded")
         } catch {
-            debugLog("Audio engine recovery: rebuild FAILED: \(error) — health check will abort if still no audio")
+            debugError("Audio engine recovery: rebuild FAILED: \(error) — health check will abort if still no audio")
         }
     }
 
@@ -1475,7 +1512,9 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
            let provider = LLMProvider(rawValue: configManager.llmProvider),
            provider != .none {
             let creds = configManager.llmCredentials[provider.rawValue] ?? ProviderCredentials()
-            polisher = LLMClient(provider: provider, credentials: creds, userNotes: notes)
+            // 抄豆包：把场景 + 最近历史 + 热词 + 自学习词 + 英文术语都喂给 LLM polish。
+            let polishContext = await buildPolishContext(notes: notes)
+            polisher = LLMClient(provider: provider, credentials: creds, polishContext: polishContext)
         } else {
             polisher = nil
         }
@@ -1496,7 +1535,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                 // already filler-removed + replacements-applied) text is still
                 // useful. But we surface the error so debugging is possible
                 // instead of silently dropping the call.
-                debugLog("Polish failed: \(error.localizedDescription)")
+                debugWarn("Polish failed: \(error.localizedDescription)")
                 print("[VoiceService] LLM polish failed: \(error)")
                 ASRLogger.shared.event(.llmPolishFailed, sessionID: session,
                                        props: ["dur_ms": ASRLogger.durMs(since: polishStart),
@@ -1639,7 +1678,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                                        "lang": asrLanguage ?? "auto"])
         let asrStart = Date()
         // Run transcription on background thread to keep UI responsive.
-        let text = await Task.detached { [engine] in
+        let transcribeTask = Task.detached { [engine] in
             let result = engine.transcribe(
                 audio: allSamples,
                 sampleRate: 16000,
@@ -1651,7 +1690,39 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             // cannot reuse, so without this they accumulate indefinitely.
             MLXMemoryGovernor.reclaim()
             return result
-        }.value
+        }
+        currentTranscribeTask = transcribeTask
+
+        // Race the transcribe against a hard timeout. The MLX call itself is
+        // synchronous and not cancellable, so when the timeout wins we just
+        // abandon the orphan task — it will finish on its own and its result
+        // is discarded.
+        let timeoutNs = Self.transcribeTimeoutSeconds * 1_000_000_000
+        let textOpt: String? = await withTaskGroup(of: String?.self) { group -> String? in
+            group.addTask { await transcribeTask.value }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: timeoutNs)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+
+        guard let text = textOpt else {
+            currentTranscribeTask = nil
+            ASRLogger.shared.event(.asrFailed, sessionID: session,
+                                   props: ["engine": engineName,
+                                           "dur_ms": ASRLogger.durMs(since: asrStart),
+                                           "reason": "timeout",
+                                           "timeout_s": Self.transcribeTimeoutSeconds])
+            debugError("transcribeAndInject TIMEOUT after \(Self.transcribeTimeoutSeconds)s — MLX likely wedged (long idle?). Reload model to recover.")
+            RecordingOverlayPanel.shared.showBriefMessage("识别超时，请重新切换模型试试")
+            state = .ready
+            return
+        }
+        currentTranscribeTask = nil
+
         ASRLogger.shared.event(.finalReceived, sessionID: session,
                                props: ["engine": engineName,
                                        "dur_ms": ASRLogger.durMs(since: asrStart),
@@ -1698,7 +1769,9 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
            provider != .none {
             let creds = configManager.llmCredentials[provider.rawValue] ?? ProviderCredentials()
             NSLog("[VoiceService] LLM polish (cloud/%@): input=\"%@\", notes=\"%@\"", provider.rawValue, processedText, notes)
-            polisher = LLMClient(provider: provider, credentials: creds, userNotes: notes)
+            // 把当前场景 + 最近 3 条历史 + 热词 + 自学习词 + 英文术语词典一并喂给 LLM。
+            let polishContext = await buildPolishContext(notes: notes)
+            polisher = LLMClient(provider: provider, credentials: creds, polishContext: polishContext)
         } else {
             polisher = nil
             NSLog("[VoiceService] LLM polish: skipped (not configured or model not ready)")
@@ -1762,6 +1835,25 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         }
         guard !parts.isEmpty else { return nil }
         return parts.joined(separator: "。") + "。"
+    }
+
+    /// 给云端 LLM polish 打包当前上下文：场景、最近历史、热词、自学习词、英文术语词典。
+    /// 历史只取最近 3 条 polished 文本——HistoryStore.fetchAll 拿到的就是 polished 版本，
+    /// prompt 里标注「可能含错」让 LLM 不被过往错字强化。空历史不会留空段。
+    private func buildPolishContext(notes: String) async -> PolishContext {
+        let recent = await historyStore.fetchAll(limit: 3)
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        // 自学习词取 active rules 的目标词（`to`）——用户实际想要的拼写。
+        let learned = CorrectionLearningEngine.shared.activeRules.map { $0.to }
+        return PolishContext(
+            userNotes: notes,
+            appContext: recordingAppContext,
+            recentHistory: recent,
+            hotwords: configManager.hotwords,
+            learnedTerms: learned,
+            techLexicon: TechLexicon.defaults
+        )
     }
 
     /// Captures the frontmost non-VoiceBrother app's localized name. Returns nil
@@ -1997,6 +2089,16 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
 
     private func debugLog(_ message: String) {
         DebugLog.write("[VoiceService] \(message)")
+    }
+
+    /// WARN/ERROR variants so real incidents surface via `grep ERROR` instead
+    /// of hiding in the INFO stream. Same `[VoiceService]` prefix.
+    private func debugWarn(_ message: String) {
+        DebugLog.warn("[VoiceService] \(message)")
+    }
+
+    private func debugError(_ message: String) {
+        DebugLog.error("[VoiceService] \(message)")
     }
 
     // MARK: - Download Progress

@@ -47,9 +47,9 @@ enum TextProcessor {
     ///   times in a row, keep one copy.
     /// - Sentences (split on .。!！?？;； and newline): if the same sentence
     ///   repeats ≥ 3 times in a row, keep at most 2 copies.
-    /// - Single-character runs (length-1 graphemes): if the same character
-    ///   repeats ≥ 5 times in a row, collapse to 3 copies (preserves the
-    ///   "我我我" emphasis pattern but kills "我我我我我我…我").
+    /// - Single-character runs (length-1 graphemes): keep at most 3 copies of
+    ///   any consecutive repeat (preserves the "我我我" emphasis pattern but
+    ///   kills "我我我我我我…我").
     static func collapseRepeats(in text: String) -> String {
         let loopCollapsed = collapseRepeatedSubstrings(text)
         let charCollapsed = collapseSingleCharRuns(loopCollapsed)
@@ -71,7 +71,6 @@ enum TextProcessor {
         var prev: Character? = nil
         var run = 0
         let maxRun = 3
-        let triggerRun = 5
         for ch in text {
             if ch == prev {
                 run += 1
@@ -79,9 +78,9 @@ enum TextProcessor {
                 prev = ch
                 run = 1
             }
-            // Always allow up to maxRun copies through; once run length passes
-            // the trigger threshold, stop emitting further repeats.
-            if run <= maxRun || run < triggerRun {
+            // Keep at most maxRun copies of any character run; drop the rest.
+            // Preserves the "我我我" emphasis pattern, kills "我我我我我…" runaways.
+            if run <= maxRun {
                 out.append(ch)
             }
         }
@@ -138,22 +137,113 @@ protocol TextPolisher {
     func shouldPolish(_ text: String) -> Bool
 }
 
+/// 上下文打包给 LLM polish。所有字段都可选——空值时 prompt 自动省略对应段，
+/// 不会留空行。设计参考豆包 Seed-ASR 2.0 的 context_data 思路：场景 + 最近
+/// 输入 + 常用词，让 LLM 看上下文做同音字消歧和大小写规范。
+struct PolishContext {
+    /// 用户自定义说明（VocabularyTab → 局部 LLM 备注）。空字符串时走默认 prompt。
+    var userNotes: String = ""
+    /// 录音瞬间前台 app 名（如 Xcode、微信）。
+    var appContext: String? = nil
+    /// 最近 N 条历史转写文本，**仅作话题参考**——可能含识别错误，不应被 LLM 当 ground truth 信任。
+    var recentHistory: [String] = []
+    /// 用户在 VocabularyTab 配置的热词。
+    var hotwords: [String] = []
+    /// 自学习引擎沉淀的高频替换目标词。
+    var learnedTerms: [String] = []
+    /// 内置英文术语词典——用于纠正中英混输大小写。
+    var techLexicon: [String] = TechLexicon.defaults
+
+    static let empty = PolishContext()
+}
+
 extension TextPolisher {
 
-    private static var defaultSystemPrompt: String {
+    /// 默认 prompt——用户未给任何 hint 时用。短小，避免反喧宾夺主。
+    private static var defaultSystemPromptBare: String {
         "你是语音转写文本优化助手。将语音转写文本优化为书面语，补充标点，修正口语表达。" +
         "保持原意，不添加内容。只输出优化后的文本，不要解释。"
     }
 
-    /// Build system prompt. When user provides custom notes, they become the primary
-    /// instruction and the "保持原意" constraint is removed to allow style transformation.
+    /// 旧签名：仅 userNotes，兼容老调用方。新代码请用 `buildSystemPrompt(context:)`。
     static func buildSystemPrompt(userNotes: String) -> String {
-        let notes = userNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        buildSystemPrompt(context: PolishContext(userNotes: userNotes))
+    }
+
+    /// 完整版 prompt——把 PolishContext 渲染成多段提示。
+    ///
+    /// 分支策略（重要）：
+    /// • `userNotes` 为空 → 用豆包式 5 项任务作主指令。这是默认/无预设场景，
+    ///   享受升级（同音字、断句、删口吃、中英大小写）。
+    /// • `userNotes` 非空 → 完全照旧逻辑：notes 作主指令，不附加豆包任务说明。
+    ///   兼容用户的「应用预设」（邮件风格 / 翻译 / 改成正式语等场景化预设）——
+    ///   旧版注释明示「保持原意」约束被去除以允许 style transformation，新版必须保留这个语义。
+    ///
+    /// 不论哪个分支，热词 / 自学习词 / 英文术语词典 / 应用场景 都作为「参考事实」附加——
+    /// 这些是用户已确认的领域知识，无论 polish 目标是什么都有助于减少错字。
+    /// 最近历史本身可能含 ASR 错字，prompt 已经标注「话题参考」让 LLM 不要强化。
+    static func buildSystemPrompt(context ctx: PolishContext) -> String {
+        let notes = ctx.userNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // ─── 主指令段 ───
+        let mainInstruction: String
         if notes.isEmpty {
-            return defaultSystemPrompt
+            // 默认豆包式 5 项任务——只在用户未填 notes 时生效。
+            mainInstruction = """
+            你是语音转写文本优化助手。对一段中文 / 中英混输的语音转写做后处理。
+
+            任务：
+            1. 根据上下文修正同音错字（如「直到/知道」「在意/再议」「码头/马头」）。
+            2. 中英混输大小写规范：英文专有名词保持官方拼写（参考「英文术语」段）。
+            3. 补全标点、按语义断句；过长口语句分成短句。
+            4. 删除无意义的口吃、重复、语气词，保留口语自然度，不书面化过度。
+            5. 不改变原意，不补充用户没说的内容。
+            只输出修正后的文本，不要解释、不要前后缀。
+            """
+        } else {
+            // 完全照旧逻辑——尊重「应用预设」可能想做风格转换 / 翻译 / 改语气。
+            // 此处不附加「不改变原意」约束，与旧版行为一致。
+            mainInstruction = "你是语音转写文本优化助手。对语音转写文本按以下要求进行处理，同时补充标点、修正口语表达。"
+                + "只输出处理后的文本，不要解释。\n要求：" + notes
         }
-        return "你是语音转写文本优化助手。对语音转写文本按以下要求进行处理，同时补充标点、修正口语表达。" +
-            "只输出处理后的文本，不要解释。\n要求：" + notes
+
+        // ─── 参考段（无论 notes 是否存在都附加，作为"事实补充"）───
+        var refs: [String] = []
+
+        if let app = ctx.appContext, !app.isEmpty {
+            refs.append("【当前应用场景】\(app)")
+        }
+
+        if !ctx.recentHistory.isEmpty {
+            // 最近输入做"话题参考"——注明可能含错以免 LLM 把过往错字当事实强化。
+            let lines = ctx.recentHistory
+                .prefix(5)
+                .enumerated()
+                .map { "  \($0.offset + 1). \($0.element)" }
+                .joined(separator: "\n")
+            refs.append("""
+            【最近输入（仅作话题参考，可能含 ASR 错字，不要当事实信任）】
+            \(lines)
+            """)
+        }
+
+        // 热词 + 自学习词合并去重——都是用户常用 / 已确认的领域词。
+        var userVocab = Array(NSOrderedSet(array: ctx.hotwords + ctx.learnedTerms)) as? [String] ?? []
+        userVocab = userVocab.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if !userVocab.isEmpty {
+            refs.append("【用户常用词 / 专有名词】\(userVocab.joined(separator: "、"))")
+        }
+
+        if !ctx.techLexicon.isEmpty {
+            refs.append("【英文术语（保持大小写）】\(ctx.techLexicon.joined(separator: ", "))")
+        }
+
+        // 没有任何参考段，且没有 notes → 退到最简旧版 prompt（保持完全向后兼容）。
+        if refs.isEmpty && notes.isEmpty {
+            return defaultSystemPromptBare
+        }
+
+        return ([mainInstruction] + refs).joined(separator: "\n\n")
     }
 
     func shouldPolish(_ text: String) -> Bool {

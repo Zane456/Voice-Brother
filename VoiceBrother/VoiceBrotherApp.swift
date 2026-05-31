@@ -11,19 +11,33 @@ struct VoiceBrotherApp: App {
     let themeManager: ThemeManager
 
     init() {
+        // Install crash capture as the very first thing, before any model load,
+        // so a startup crash still leaves a breadcrumb. Re-raises with the
+        // default handler, so the OS crash report is unaffected.
+        DebugLog.installCrashHandlers()
+
+        // Bound MLX's GPU buffer cache before any model loads. Without this,
+        // variable-length transcription intermediates accumulate in MLX's
+        // recycle pool and process RSS grows to tens of GB after long use.
+        // Must run BEFORE the --retranscribe early-exit below — that offline
+        // path also loads a Qwen model and would otherwise run with MLX's
+        // default (effectively unbounded) cache limit.
+        MLXMemoryGovernor.configure()
+
         // Hidden launch path: re-transcribe an existing meeting WAV in a
         // chosen language and write a fresh markdown alongside. Used to
         // recover meetings that were captured under the wrong language hint.
         // Usage:
         //   VoiceBrother --retranscribe <wav> <language> <output_md> [model_id]
+        // NOTE: no logLaunch() here — this headless path exits via exit() and
+        // would otherwise leave a stale dirty-flag that mis-flags the next GUI
+        // launch as an abnormal exit.
         if let opts = MeetingRetranscribeLauncher.parseArgs(CommandLine.arguments) {
             MeetingRetranscribeLauncher.runAndExit(options: opts)
         }
 
-        // Bound MLX's GPU buffer cache before any model loads. Without this,
-        // variable-length transcription intermediates accumulate in MLX's
-        // recycle pool and process RSS grows to tens of GB after long use.
-        MLXMemoryGovernor.configure()
+        // GUI launch breadcrumb + dirty-flag (flags abnormal prior exits).
+        DebugLog.logLaunch()
 
         let config = ConfigManager()
         let permissions = PermissionManager()
@@ -112,7 +126,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // Cleanup all services
+        // Clean-exit breadcrumb clears the dirty-flag. Fires on ⌘Q / normal
+        // quit but NOT on SIGKILL (force-quit, OOM) — so a surviving marker at
+        // next launch pinpoints exactly the abnormal terminations.
+        DebugLog.logCleanExit()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

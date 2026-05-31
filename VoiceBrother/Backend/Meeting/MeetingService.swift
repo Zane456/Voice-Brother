@@ -222,7 +222,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 if p > lastProgress { lastProgress = p; stalledPolls = 0 }
                 else { stalledPolls += 1 }
                 if stalledPolls >= 3 {
-                    DebugLog.write("[MeetingService] Model-load watchdog: no progress ~45s — forcing .error")
+                    DebugLog.error("[MeetingService] Model-load watchdog: no progress ~45s — forcing .error")
                     self.startGeneration &+= 1   // orphan the stuck startup task
                     self.recordingTask?.cancel()
                     self.recordingTask = nil
@@ -303,7 +303,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 // If the watchdog / a stop() already recovered this meeting,
                 // don't touch state — the error belongs to a disowned task.
                 guard self.startGeneration == gen else {
-                    DebugLog.write("[MeetingService] orphaned startup task error: \(error)")
+                    DebugLog.error("[MeetingService] orphaned startup task error: \(error)")
                     return
                 }
                 self.loadWatchdog?.cancel()

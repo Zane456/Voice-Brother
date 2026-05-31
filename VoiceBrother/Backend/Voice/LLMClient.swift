@@ -6,15 +6,25 @@ final class LLMClient: TextPolisher {
 
     private let provider: LLMProvider
     private let credentials: ProviderCredentials
-    private let userNotes: String
+    private let polishContext: PolishContext
     private let timeout: TimeInterval
     private let maxTokens: Int
 
-    init(provider: LLMProvider, credentials: ProviderCredentials, userNotes: String,
+    /// 旧签名：仅 userNotes。兼容现有调用方（如 MeetingSummarizer / 预热 ping）。
+    convenience init(provider: LLMProvider, credentials: ProviderCredentials, userNotes: String,
+                     timeout: TimeInterval = 15, maxTokens: Int = 2048) {
+        self.init(provider: provider, credentials: credentials,
+                  polishContext: PolishContext(userNotes: userNotes),
+                  timeout: timeout, maxTokens: maxTokens)
+    }
+
+    /// 完整版：传 PolishContext。语音输入主路径用这个，把场景 / 历史 / 热词都喂进去。
+    init(provider: LLMProvider, credentials: ProviderCredentials,
+         polishContext: PolishContext,
          timeout: TimeInterval = 15, maxTokens: Int = 2048) {
         self.provider = provider
         self.credentials = credentials
-        self.userNotes = userNotes
+        self.polishContext = polishContext
         self.timeout = timeout
         self.maxTokens = maxTokens
     }
@@ -22,7 +32,7 @@ final class LLMClient: TextPolisher {
     // MARK: - TextPolisher
 
     func polish(_ text: String) async throws -> String {
-        let systemPrompt = Self.buildSystemPrompt(userNotes: userNotes)
+        let systemPrompt = Self.buildSystemPrompt(context: polishContext)
         let result = try await call(systemPrompt: systemPrompt, userMessage: text)
 
         let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -133,10 +143,13 @@ final class LLMClient: TextPolisher {
             throw LLMError.apiError(statusCode: httpResponse.statusCode, message: errorBody)
         }
 
+        // Anthropic Messages API returns a `content` array whose blocks may be
+        // typed `thinking` / `tool_use` *before* the `text` block (extended
+        // thinking is on by default for some models, e.g. glm-5.1). Pick the
+        // first block that actually carries text instead of assuming index 0.
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let content = json["content"] as? [[String: Any]],
-              let firstBlock = content.first,
-              let text = firstBlock["text"] as? String else {
+              let text = content.compactMap({ $0["text"] as? String }).first else {
             throw LLMError.parseError
         }
 

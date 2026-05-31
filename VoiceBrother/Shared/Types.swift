@@ -221,7 +221,7 @@ enum ASRModel: String, CaseIterable, Identifiable {
     var huggingFaceId: String {
         switch self {
         case .small: return "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
-        case .large: return "aufklarer/Qwen3-ASR-1.7B-MLX-8bit"
+        case .large: return "aufklarer/Qwen3-ASR-1.7B-MLX-4bit"
         case .apple: return ""
         }
     }
@@ -229,7 +229,7 @@ enum ASRModel: String, CaseIterable, Identifiable {
     var estimatedSize: String {
         switch self {
         case .small: return "~400MB"
-        case .large: return "~2.5GB"
+        case .large: return "~2.1GB"
         case .apple: return "系统内置"
         }
     }
@@ -574,10 +574,11 @@ struct PromptPreset: Identifiable, Hashable {
     let prompt: String
     let isBuiltIn: Bool
 
+    /// 内置预设——只保留"风格转换 / 写作场景"类，删掉跟"留空默认"语义重叠的条目。
+    /// 留空时 LLMClient 会走 TextProcessor 里的豆包式 5 项任务（同音字纠正、断句、
+    /// 删口吃、中英大小写、不改原意），等价于以前那个"默认（书面化）"预设，所以
+    /// 那条已经移除，避免用户选了它反而拿到弱化版（旧预设没有同音字/大小写规范）。
     static let builtInPolishPresets: [PromptPreset] = [
-        PromptPreset(id: "builtin.polish.default", name: "默认（书面化）",
-                     prompt: "保持原意不变，修正口语化表达，补充缺失的标点符号。不要添加原文没有的内容。",
-                     isBuiltIn: true),
         PromptPreset(id: "builtin.polish.wechat", name: "公众号风格",
                      prompt: "保留长句和书面化表达，适度补充段落连接词，让文字更适合公众号阅读。保留所有英文专有名词不翻译。",
                      isBuiltIn: true),
