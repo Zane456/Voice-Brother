@@ -1744,6 +1744,16 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                                props: ["len": processedText.count])
         debugLog("After TextProcessor: \"\(processedText)\"")
 
+        // Defense-in-depth: the model sometimes appends the entire hotword
+        // priming list to the tail of real speech (prompt leakage on trailing
+        // silence). Strip a long trailing run of consecutive hotword tokens —
+        // real dictation never ends with 10+ bare proper nouns in a row.
+        if let cleaned = Self.stripTrailingHotwordEcho(processedText, hotwords: hotwords),
+           cleaned != processedText {
+            debugLog("Stripped trailing hotword echo: \"\(processedText)\" → \"\(cleaned)\"")
+            processedText = cleaned
+        }
+
         let isHotwordHallucination = Self.isLikelyHotwordHallucination(processedText, hotwords: hotwords)
         let isSilenceHallucination = Self.isLikelySilenceHallucination(processedText)
 
@@ -1821,10 +1831,18 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
     /// reference vocabulary rather than priming itself to echo them as the
     /// transcription. Passing a raw space-joined word list (the previous behavior)
     /// causes the model to regurgitate hotwords verbatim on short/silent audio.
+    /// Hard cap on how many hotwords we inject as ASR priming context. Long
+    /// lists make Qwen3-ASR echo the whole list verbatim on trailing silence
+    /// (prompt leakage). The full list still reaches LLM polish via
+    /// buildPolishContext — only the echo-prone ASR context is capped. Manual
+    /// words sit first in storage, so prefix() keeps the user-curated terms.
+    static let asrContextHotwordCap = 30
+
     static func buildHotwordContext(_ hotwords: [String], appName: String? = nil) -> String? {
         let cleaned = hotwords
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+            .prefix(asrContextHotwordCap)
 
         var parts: [String] = []
         if let appName, !appName.isEmpty {
@@ -1927,6 +1945,69 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         if strippedRatio >= 0.8 && remainingBytes <= 18 { return true }
 
         return false
+    }
+
+    // MARK: - Trailing hotword echo
+
+    /// Separators the model uses when it dumps the hotword list (enumeration
+    /// comma, regular commas, semicolons, slashes, spaces).
+    private static let echoSeparators: Set<Character> = ["、", "，", ",", ";", "；", "/", " ", "\t"]
+    /// Terminal punctuation/whitespace to peel off the tail before scanning.
+    private static let echoTerminators: Set<Character> = ["。", ".", "!", "?", "！", "？", " ", "\t", "\n"]
+    /// Minimum consecutive trailing hotword tokens that we treat as a leaked
+    /// priming list rather than spoken content. Natural dictation never ends
+    /// with this many bare proper nouns strung together by separators; the
+    /// leaked list is far longer (up to asrContextHotwordCap).
+    private static let trailingEchoThreshold = 10
+
+    /// Strip a long trailing run of consecutive hotword tokens from `text`.
+    /// Returns the cleaned string, or nil when no qualifying run exists (the
+    /// caller leaves the text untouched). Walks from the tail, matching the
+    /// longest hotword each step and requiring a separator boundary before each
+    /// match — so a hotword that is merely the suffix of a real word (e.g.
+    /// 「记忆系统」at the end of 「的记忆系统」) is never clipped.
+    static func stripTrailingHotwordEcho(_ text: String, hotwords: [String]) -> String? {
+        guard !hotwords.isEmpty else { return nil }
+
+        var tokens = Set<String>()
+        for word in hotwords {
+            let w = word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !w.isEmpty else { continue }
+            tokens.insert(w)
+            for part in w.split(separator: " ").map(String.init) where !part.isEmpty {
+                tokens.insert(part)
+            }
+        }
+        guard !tokens.isEmpty else { return nil }
+        let ordered = tokens.sorted { $0.count > $1.count }   // longest-first match
+
+        var s = text
+        while let last = s.last, echoTerminators.contains(last) { s.removeLast() }
+
+        var stripped = 0
+        outer: while true {
+            while let last = s.last, echoSeparators.contains(last) { s.removeLast() }
+            guard !s.isEmpty else { break }
+            let lower = s.lowercased()   // 1:1 length for ASCII/CJK, so offsets align with `s`
+            for token in ordered where lower.hasSuffix(token) {
+                let cut = s.index(s.endIndex, offsetBy: -token.count)
+                // Require a separator boundary (or string start) before the
+                // match so we only clip enumerated list items, never a hotword
+                // embedded in a real word.
+                if cut == s.startIndex || echoSeparators.contains(s[s.index(before: cut)]) {
+                    s = String(s[..<cut])
+                    stripped += 1
+                    continue outer
+                }
+            }
+            break
+        }
+
+        guard stripped >= trailingEchoThreshold else { return nil }
+        while let last = s.last, echoSeparators.contains(last) || echoTerminators.contains(last) {
+            s.removeLast()
+        }
+        return s
     }
 
     /// Phrases Qwen3-ASR tends to output when the audio is too quiet, too short,
