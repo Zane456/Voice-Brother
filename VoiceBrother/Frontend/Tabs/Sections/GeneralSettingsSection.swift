@@ -41,6 +41,12 @@ struct GeneralSettingsSection: View {
 
                     Divider().padding(.horizontal, 16)
 
+                    toggleRow(title: "句尾标点",
+                              subtitle: "保留转写结果的句末标点符号；关闭则替换为空格",
+                              isOn: $configManager.trailingPunctuation)
+
+                    Divider().padding(.horizontal, 16)
+
                     toggleRow(title: "渐进上屏（实验）",
                               subtitle: "目标 App 内按打字机节奏逐字键入（浮窗只显示波形）；关闭则现有整段一次性粘贴",
                               isOn: $configManager.typewriterMode)

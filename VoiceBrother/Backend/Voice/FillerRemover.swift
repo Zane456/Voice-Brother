@@ -20,7 +20,7 @@ enum FillerRemover {
         "就是说", "怎么说呢", "你知道吧", "我觉得吧",
         "说实话", "老实说",
         // Common spoken padding
-        "反正", "其实吧", "对吧", "是吧", "嘛",
+        "反正", "其实吧", "嘛",
     ]
 
     /// Fillers that need context check — may be legitimate words.
@@ -122,6 +122,52 @@ enum FillerRemover {
         // 保留夹在字中间的（"漂亮啊"/"哎呀"中的"啊"是真感叹/复合词）。
         result = removeStandaloneA(from: result)
 
+        // "是吧"/"对吧" — 句中 filler 删除，句尾语气词保留。
+        // 句尾 = 紧跟句末标点（？。！）或字符串结尾。
+        // 句中 = 后面还有内容（逗号、其他字），属于口头禅。
+        result = removeMiddleBaParticle(from: result)
+
+        return result
+    }
+
+    /// Context-aware removal of "是吧"/"对吧".
+    /// Keep at sentence end (followed by sentence-ending punctuation or EOS) —
+    /// legitimate question/confirmation particles ("对吧？", "是吧！").
+    /// Remove in mid-sentence where they act as filler padding
+    /// ("对吧，我们继续", "是吧，然后呢").
+    private static func removeMiddleBaParticle(from text: String) -> String {
+        let targets = ["是吧", "对吧"]
+        var result = text
+        // Sentence-ending punctuation — if "是吧/对吧" is followed by one of
+        // these (or is at the very end), it's a real particle, keep it.
+        let sentenceEnders: Set<Character> = ["？", "？", "！", "。", ".", "！", "\n"]
+        // Mid-sentence marker: comma or other content after → filler.
+        for target in targets {
+            var output = ""
+            var i = result.startIndex
+            while i < result.endIndex {
+                if result[i...].hasPrefix(target) {
+                    let afterIdx = result.index(i, offsetBy: target.count, limitedBy: result.endIndex) ?? result.endIndex
+                    if afterIdx == result.endIndex {
+                        // End of string — keep (legitimate trailing particle)
+                        output += target
+                        i = afterIdx
+                    } else if let nextChar = result[afterIdx...].first,
+                              sentenceEnders.contains(nextChar) {
+                        // Before sentence-ending punctuation — keep
+                        output += target
+                        i = afterIdx
+                    } else {
+                        // Mid-sentence filler — remove
+                        i = afterIdx
+                    }
+                } else {
+                    output.append(result[i])
+                    i = result.index(after: i)
+                }
+            }
+            result = output
+        }
         return result
     }
 

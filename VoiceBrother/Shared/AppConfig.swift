@@ -46,6 +46,10 @@ final class AppConfig: ObservableObject {
     @Published var typewriterMode: Bool {
         didSet { scheduleSave() }
     }
+    /// 保留句尾标点。开启时保持 ASR/LLM 输出的尾标点不变；关闭时将尾标点替换为空格。
+    @Published var trailingPunctuation: Bool {
+        didSet { scheduleSave() }
+    }
     /// Retention window (months) for voice transcription history.
     @Published var historyRetentionMonths: Int {
         didSet { scheduleSave() }
@@ -167,6 +171,7 @@ final class AppConfig: ObservableObject {
     static let defaultSpaceReposition = true
     static let defaultPreserveClipboard = true
     static let defaultTypewriterMode = false
+    static let defaultTrailingPunctuation = true
     static let defaultHistoryRetentionMonths = 2
     static let defaultMeetingRetentionMonths = 2
     static let defaultMeetingSavePath: String = {
@@ -224,6 +229,7 @@ final class AppConfig: ObservableObject {
         self.meetingSavePath = Self.load("meetingSavePath", default: Self.defaultMeetingSavePath)
         self.preserveClipboard = Self.load("preserveClipboard", default: Self.defaultPreserveClipboard)
         self.typewriterMode = Self.load("typewriterMode", default: Self.defaultTypewriterMode)
+        self.trailingPunctuation = Self.load("trailingPunctuation", default: Self.defaultTrailingPunctuation)
         self.historyRetentionMonths = Self.load("historyRetentionMonths", default: Self.defaultHistoryRetentionMonths)
         self.meetingRetentionMonths = Self.load("meetingRetentionMonths", default: Self.defaultMeetingRetentionMonths)
         self.onboardingDone = Self.load("onboardingDone", default: Self.defaultOnboardingDone)
@@ -328,6 +334,7 @@ final class AppConfig: ObservableObject {
         defaults.set(meetingSavePath, forKey: "meetingSavePath")
         defaults.set(preserveClipboard, forKey: "preserveClipboard")
         defaults.set(typewriterMode, forKey: "typewriterMode")
+        defaults.set(trailingPunctuation, forKey: "trailingPunctuation")
         defaults.set(historyRetentionMonths, forKey: "historyRetentionMonths")
         defaults.set(meetingRetentionMonths, forKey: "meetingRetentionMonths")
         defaults.set(onboardingDone, forKey: "onboardingDone")

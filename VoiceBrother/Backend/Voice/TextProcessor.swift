@@ -119,6 +119,28 @@ enum TextProcessor {
         return out.joined()
     }
 
+    /// Strip trailing punctuation (CJK + Latin) and replace with a space.
+    /// If the text has no trailing punctuation, appends a space instead.
+    static func stripTrailingPunctuation(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return text }
+
+        let punctuation: Set<Character> = [
+            "。", "，", "！", "？", "；", "：", "、",
+            ".", ",", "!", "?", ";", ":",
+            "…", "～", "~", "—", "-"
+        ]
+
+        var chars = Array(trimmed)
+        // Strip consecutive trailing punctuation
+        while let last = chars.last, punctuation.contains(last) {
+            chars.removeLast()
+        }
+
+        if chars.isEmpty { return " " }
+        return String(chars) + " "
+    }
+
     /// Apply replacement rules in order. Each rule performs a literal string replacement.
     static func applyReplacements(to text: String, rules: [ReplacementRule]) -> String {
         var result = text

@@ -1543,6 +1543,11 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
             }
         }
 
+        // 句尾标点处理：关闭时去掉尾部标点换成空格
+        if !configManager.trailingPunctuation {
+            processedText = TextProcessor.stripTrailingPunctuation(processedText)
+        }
+
         await injectFinalText(processedText, session: session, engineName: "volcano")
         playEndSound()
 
@@ -1809,6 +1814,11 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
                                        props: ["dur_ms": ASRLogger.durMs(since: polishStart),
                                                "error": "\(error.localizedDescription)"])
             }
+        }
+
+        // 句尾标点处理：关闭时去掉尾部标点换成空格
+        if !configManager.trailingPunctuation {
+            processedText = TextProcessor.stripTrailingPunctuation(processedText)
         }
 
         // Inject text. In typewriter mode the overlay (waveform only) was kept

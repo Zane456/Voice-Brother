@@ -61,6 +61,10 @@ final class ConfigManager: ObservableObject, ConfigManagerProtocol {
         get { appConfig.typewriterMode }
         set { appConfig.typewriterMode = newValue }
     }
+    var trailingPunctuation: Bool {
+        get { appConfig.trailingPunctuation }
+        set { appConfig.trailingPunctuation = newValue }
+    }
     var historyRetentionMonths: Int {
         get { appConfig.historyRetentionMonths }
         set { appConfig.historyRetentionMonths = newValue }
