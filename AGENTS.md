@@ -4,18 +4,7 @@
 
 ## 需求与架构
 
-所有需求定义、数据流、状态机、API 参考均在 `PROJECT.md`。这是唯一的真相来源（single source of truth），开发前必读。
-
-关键章节速查：
-| 需要了解 | 查 PROJECT.md 章节 |
-|---------|------------------|
-| 核心功能与数据流 | 二、核心功能（含完整数据流图） |
-| UI 设计参数（色板、间距、动画） | 3.2 视觉风格 |
-| 三层架构与目录结构 | 七、架构分层与模块边界 |
-| 协议定义（前后端合同） | 7.4 共享层：协议定义 |
-| speech-swift API | 九、技术方向 → speech-swift 关键 API |
-| 开发阶段划分 | 十、开发阶段 |
-| 完整功能清单 | 十一、迁移清单 |
+早期内部规格 `PROJECT.md` 已在开源时移除（commit `d7bb1a0`），不再存在。现在的真相来源 = **代码本身** + 本文件下方各表（平台约束 / 开发原则 / 修改影响范围）+ `README.md` 的功能清单。
 
 ## 平台与约束
 
@@ -31,10 +20,10 @@
 前端只依赖 `Shared/` 层的协议和类型，不依赖后端具体实现。前端可用 Mock 独立开发，后端可用单元测试独立验证。两边通过 `@EnvironmentObject` + `@Published` 通信。
 
 ### 视觉风格
-保留 Voice Aura 的 **Glassmorphism 风格**，色板和动画参数从 Python 版搬运（见 PROJECT.md 3.2）。布局结构参考 Type4Me 的两栏式设计。注意：Voice Aura 的配色是**自定义色板**，不是系统语义色。
+保留 Voice Aura 的 **Glassmorphism 风格**，色板和动画参数从 Python 版搬运。布局结构参考 Type4Me 的两栏式设计。注意：Voice Aura 的配色是**自定义色板**，不是系统语义色。
 
 ### 从 Python 版翻译
-`keyboard_listener.py`、`voice_service.py`、`config.py`、`meeting_service.py` 的核心逻辑可直接翻译。参考 PROJECT.md 第九章"可复用的代码/逻辑"表格。Python 版源码在 `~/IDE project/Voice-Aura/`。
+`keyboard_listener.py`、`voice_service.py`、`config.py`、`meeting_service.py` 的核心逻辑可直接翻译。Python 版源码在 `~/IDE project/Voice-Aura/`。
 
 ## Skill 路由
 
@@ -48,7 +37,7 @@
 ### Skill 使用判断
 - 写 SwiftUI 视图 → 先查 `liquid-glass` 的组件模式，再对照 `macos-hig-designer` 的 macOS 规范
 - 做 NSPanel / AppKit 互操作 → 查 `macos-hig-designer` 第 10 节 AppKit Interop
-- 做录音浮窗 → PROJECT.md 4.4 节定义了参数，`macos-hig-designer` 提供 NSPanel 的现代实践
+- 做录音浮窗 → 参数见 `RecordingOverlayPanel.swift`，`macos-hig-designer` 提供 NSPanel 的现代实践
 
 ## MCP / 工具路由
 
@@ -61,7 +50,7 @@
 | 理解开源项目结构/代码 | `zread`（get_repo_structure / read_file / search_doc） |
 | 分析截图 / UI 设计稿 / 技术图表 | `zai-mcp-server`（analyze_image / ui_diff_check 等） |
 | 读 Voice Aura Python 源码（翻译参考） | 直接 `Read` 工具读 `~/IDE project/Voice-Aura/` |
-| 跨会话搜索历史上下文 | `Codex-mem` search（不传 project 参数可全量检索） |
+| 跨会话搜索历史上下文 | `claude-mem` search（不传 project 参数可全量检索） |
 
 ## 开发阶段
 
@@ -122,19 +111,38 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 3. **改 RecordingOverlayPanel 的 show/hide 逻辑前**：注意动画 completionHandler 的异步竞态（见已知问题）
 4. **改 Protocol 接口**：前后端必须同步更新，编译验证
 5. **改 Types/枚举**：全局搜索所有 switch/case，确认无遗漏
-6. **改完后必须自动构建并重启应用**（用户不使用 Xcode，所有操作由命令行完成）：
+6. **改完后必须自动构建并重启应用**（用户不使用 Xcode，所有操作由命令行完成）。**只走 Release 构建 + `/Applications/Voice Brother.app` 固定路径**，否则 TCC 权限每次重建都会被 macOS 重置（详见下面"为什么必须 Release"）：
    ```bash
-   # 1. 构建
-   cd "~/IDE project/Voice Brother"
-   xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet
+   # 1. Release 构建到临时路径（关掉 base entitlements 注入，避免 get-task-allow）
+   xcodebuild build \
+     -project "~/IDE project/Voice Brother/VoiceBrother.xcodeproj" \
+     -scheme VoiceBrother \
+     -configuration Release \
+     -derivedDataPath "~/IDE project/Voice Brother/build/.tmp-build" \
+     -skipPackagePluginValidation \
+     CODE_SIGN_IDENTITY="VoiceBubble Dev" \
+     CODE_SIGN_STYLE=Manual \
+     DEVELOPMENT_TEAM="" \
+     CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
 
-   # 2. 关闭正在运行的旧实例
+   # 2. 关闭旧实例 + ditto 覆盖到 /Applications + 清理临时目录
+   # 用 osascript 干净退出（触发 applicationWillTerminate → 写 [Lifecycle] clean exit
+   # 并清除 dirty-flag）。pkill 发 SIGTERM 不触发该回调，会在日志里留一条假的
+   # "previous session ended ABNORMALLY"。osascript 失败（app 卡死）才 fallback 到 pkill。
+   osascript -e 'quit app "Voice Brother"' 2>/dev/null || true
+   sleep 1
    pkill -x "VoiceBrother" 2>/dev/null || true
+   rm -r "/Applications/Voice Brother.app" 2>/dev/null
+   ditto "~/IDE project/Voice Brother/build/.tmp-build/Build/Products/Release/VoiceBrother.app" "/Applications/Voice Brother.app"
+   rm -r "~/IDE project/Voice Brother/build/.tmp-build"
 
-   # 3. 启动新构建的应用
-   open "~/Library/Developer/Xcode/DerivedData/VoiceBrother-dopowvwzswipvocptpcwzjpqinvh/Build/Products/Debug/VoiceBrother.app"
+   # 3. 启动新版
+   open "/Applications/Voice Brother.app"
    ```
    **每次修改代码后都必须执行这三步**，不要只构建不重启，也不要让用户手动去操作。
+   构建末尾偶尔会报 `accessing build database ... disk I/O error`（LaunchServices 注册步骤的小故障），**不影响产物**，已签名好的 .app 会照常生成，忽略即可。
+
+   **为什么必须 Release 而不是 Debug**：Debug 构建的 entitlements 自动注入 `get-task-allow=true`（允许 lldb 附加），macOS TCC 把带这个 flag 的 binary 视为"可被任意篡改"，**不持久缓存敏感权限**（辅助功能 / 输入监控），每次重建都会要求重新授权 → 弹密码。Release 构建 + `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` 干净 entitlements + 固定 `/Applications` 路径 = TCC 按 designated requirement 长期缓存权限，重建多少次都不弹。
 
 ## 外部依赖补丁（SPM checkout patch）
 
@@ -179,6 +187,12 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 
 **验证方法**：观察 `/tmp/vb_selflearn_debug.log` 中 `MLX active=... cache=...`，正常时 cache 应在每次转写后回到 0。
 **回归红线**：如果 active 持续上涨（不只是 peak），说明有新的 MLX 数组被作为长期持有的属性挂住了。
+
+### ✅ 已修：显示主窗口点击无效
+主窗口由 `WindowGroup` 改为单实例 `Window(id:"main")`——WindowGroup 窗口关闭即销毁、从 NSApp.windows 移除，菜单"显示主窗口"的遍历兜底因此空跑。改用 `MainWindowOpener` 单例桥接 SwiftUI `openWindow`，菜单 / ⌘, / Dock 重开三条路径统一走它。**不要改回 WindowGroup。**（`WindowCornerRadius.swift` 已有同名 `WindowAccessor`，桥故命名 MainWindowOpener 避让。）
+
+### ✅ 已修：自学习引擎误学常用词
+`CorrectionLearningEngine` 从历史编辑提取替换规则时会误学（曾出「好了→我的ext」每句触发）。守卫：`nonLearnableTerms` 常用词黑名单 + `applyReplacements` 对纯 ASCII 的 `from` 按词边界匹配（防 `20` 误伤 `2026`、`AI` 误伤 `RAID`）。**回归红线**：黑名单闸必须在 `learn()` 的 REVERT 分支**之后**，否则 `to` 是常用词的已学规则永远撤不掉。坏规则数据 + 清理见 memory。
 
 ### P1（未修）：MeetingService 穿透访问 VoiceService 内部
 `voiceService?.keyboardListenerRef?.isMeetingActive` 绕过 Protocol 层。**已用锁保护 `isMeetingActive` getter/setter**，但架构层面仍破坏了前后端解耦。后续可在 VoiceServiceProtocol 中添加 `func setMeetingActive(_:)`。（`asrEngineRef` 穿透已随会议独立模型一并移除。）
