@@ -259,6 +259,10 @@ enum FillerRemover {
         // Remove comma right before period (e.g. "，。" → "。")
         result = replacePattern(result, pattern: "[，,][。.]", with: "。")
 
+        // Remove comma right AFTER a sentence-ender (e.g. "？，" → "？")。删句中
+        // 语气词后常残留——"真的吗？嗯，对"去掉"嗯"后留"？，"，清成"？"。
+        result = replacePattern(result, pattern: "([。.！!？?；;])[，,]", with: "$1")
+
         // Remove trailing comma at end
         result = replacePattern(result, pattern: "[，,]+$", with: "")
 
