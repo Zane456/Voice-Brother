@@ -368,7 +368,12 @@ enum ITNProcessor {
         var result = text
 
         // Pattern: Chinese number + 块钱/块/元
-        let currencyPattern = "([零一二两三四五六七八九十百千万亿]+)(?:块钱|块([一二三四五六七八九])[毛角]?|元)"
+        // 裸"元"加负向前瞻：后面跟数字 / 组运表方函 / 件素 时不当货币——
+        // 这些是数学 / 编程 / 固定词，不是钱。挡住：
+        //   一元二次方程 二元一次方程（元+数字）、三元组 三元运算符 三元表达式
+        //   一元方程 一元函数、元件 元素。真货币的"元"后面只跟标点/的/了/整/结尾，
+        //   绝不跟这些字，所以排除它们对货币转换零损失。
+        let currencyPattern = "([零一二两三四五六七八九十百千万亿]+)(?:块钱|块([一二三四五六七八九])[毛角]?|元(?![零一二两三四五六七八九十组运表件素方函]))"
         if let regex = try? NSRegularExpression(pattern: currencyPattern) {
             let nsText = result as NSString
             let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsText.length))
