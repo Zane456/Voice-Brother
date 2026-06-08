@@ -214,61 +214,97 @@ struct AboutTab: View {
             // All four desc strings are kept to exactly 20 full-width glyphs
             // (CJK + 、 only, no Latin / spaces) so every row's secondary line
             // is the same visual length.
-            VStack(spacing: 0) {
-                instrRow(icon: "waveform", title: "语音输入",
-                         desc: "设置录音触发按键、识别模型与转写润色规则",
-                         tab: "语音")
-                Divider().padding(.horizontal, 16)
-                instrRow(icon: "person.2.wave.2", title: "声音录制",
-                         desc: "配置长时录音识别模型、屏幕录制与内容摘要",
-                         tab: "声音录制")
-                Divider().padding(.horizontal, 16)
-                instrRow(icon: "clock.arrow.circlepath", title: "历史记录",
-                         desc: "按日期查看、搜索与管理语音转写与录音记录",
-                         tab: "历史")
-                Divider().padding(.horizontal, 16)
-                instrRow(icon: "gearshape", title: "通用设置",
-                         desc: "调整输入行为、历史记录开关与文件保存路径",
-                         tab: "通用")
+            // 每条做成独立的卡片式按钮（而非一张卡里的扁平行）——独立边框 +
+            // hover 高亮 + 按下回弹 + 尾部 › 箭头，一眼看出"这是能按的"。
+            // 保持 Codex 扁平风：无阴影、发丝边框、蓝色 accent。
+            VStack(spacing: 8) {
+                InstructionButton(icon: "waveform", title: "语音输入",
+                                  desc: "设置录音触发按键、识别模型与转写润色规则",
+                                  tab: "语音", onNavigate: onNavigate)
+                InstructionButton(icon: "person.2.wave.2", title: "声音录制",
+                                  desc: "配置长时录音识别模型、屏幕录制与内容摘要",
+                                  tab: "声音录制", onNavigate: onNavigate)
+                InstructionButton(icon: "clock.arrow.circlepath", title: "历史记录",
+                                  desc: "按日期查看、搜索与管理语音转写与录音记录",
+                                  tab: "历史", onNavigate: onNavigate)
+                InstructionButton(icon: "gearshape", title: "通用设置",
+                                  desc: "调整输入行为、历史记录开关与文件保存路径",
+                                  tab: "通用", onNavigate: onNavigate)
             }
-            .glassCard()
         }
     }
 
-    private func instrRow(icon: String, title: String, desc: String, tab: String) -> some View {
-        // The row is a plain button: same visual as before, but the whole
-        // padded area is a click target that jumps to the page it describes.
-        Button {
-            onNavigate(tab)
-        } label: {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: icon)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(theme.accent)
-                    .frame(width: 20)
+    /// 单条"使用说明"——独立的卡片式按钮。拥有自己的 hover 状态：hover 时边框
+    /// 转蓝 + 淡蓝填充、尾部箭头转蓝，按下时轻微缩放回弹。让它一眼是个能按的按钮。
+    private struct InstructionButton: View {
+        @EnvironmentObject private var theme: ThemeManager
+        let icon: String
+        let title: String
+        let desc: String
+        let tab: String
+        let onNavigate: (String) -> Void
+        @State private var isHovering = false
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(desc)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+        var body: some View {
+            let radius = theme.cardBaseCornerRadius
+            return Button {
+                onNavigate(tab)
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: icon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(theme.accent)
+                        .frame(width: 24)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(theme.textPrimary)
+                        Text(desc)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    // 导航暗示——hover 时随边框一起转蓝。
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(isHovering ? theme.accent : theme.textTertiary)
                 }
-
-                // Without this Spacer each HStack hugs its content; the parent
-                // VStack's default centring then leaves every row indented by a
-                // different amount. Mirror the dataFlowRow / permRow layout so
-                // every section in this tab is left-anchored.
-                Spacer(minLength: 0)
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(theme.surfaceBackground)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(theme.accent.opacity(isHovering ? 0.06 : 0))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .stroke(isHovering ? theme.accent.opacity(0.55) : theme.cardBorderColor,
+                                lineWidth: 1)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            .buttonStyle(PressableCardButtonStyle())
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
+                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
         }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+    }
+
+    /// 卡片按钮的按下反馈——轻微缩放 + 压暗，给"按下去了"的触感。
+    private struct PressableCardButtonStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .scaleEffect(configuration.isPressed ? 0.985 : 1.0)
+                .opacity(configuration.isPressed ? 0.9 : 1.0)
+                .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
         }
     }
 
