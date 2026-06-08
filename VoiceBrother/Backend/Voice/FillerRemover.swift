@@ -18,7 +18,6 @@ enum FillerRemover {
         "呃", "额", "嗯", "啊啊", "哎", "嗯嗯", "诶",
         // Discourse markers (口头禅)
         "就是说", "怎么说呢", "你知道吧", "我觉得吧",
-        "说实话", "老实说",
         // Common spoken padding
         "反正", "其实吧",
     ]
@@ -120,6 +119,11 @@ enum FillerRemover {
 
         // "其实" — only remove "其实" at the very start (filler usage)
         result = replacePattern(result, pattern: "^其实[，,]?", with: "")
+
+        // "说实话"/"老实说" — 仅在句首或标点后（filler 位）删除；保留真实动词短语
+        // 用法（"他说实话从不撒谎" / "你要老实说" 不能被砍成 "他" / "你要"）。
+        // 与"就是"同一策略：捕获前导边界为 $1 把标点留住。
+        result = replacePattern(result, pattern: "(^|[，,。.！!？?；;])[\\s]*(?:说实话|老实说)[，,]?", with: "$1")
 
         // 单字"啊" — context-aware：仅删贴着标点的（filler 用法），
         // 保留夹在字中间的（"漂亮啊"/"哎呀"中的"啊"是真感叹/复合词）。
