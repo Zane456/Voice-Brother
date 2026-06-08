@@ -488,6 +488,8 @@ enum ITNProcessor {
         guard hasMath else { return result }
 
         // Comparison operators (longer patterns first)
+        // "约等于" → "≈"（工程高频）。必须在裸"等于"→"="之前，否则被切成"约="。
+        result = result.replacingOccurrences(of: "约等于", with: "≈")
         result = result.replacingOccurrences(of: "大于等于", with: "≥")
         result = result.replacingOccurrences(of: "小于等于", with: "≤")
         result = result.replacingOccurrences(of: "不等于", with: "≠")
@@ -560,7 +562,7 @@ enum ITNProcessor {
     /// Convert Chinese digits that are adjacent to math symbols (operators, superscripts, etc.)
     /// "三+三" → "3+3", "十²" → "10²", "九" after "=" → "9"
     private static func convertMathAdjacentDigits(_ text: String) -> String {
-        let mathSymbols: Set<Character> = ["+", "-", "×", "÷", "=", ">", "<", "≥", "≤", "≠",
+        let mathSymbols: Set<Character> = ["+", "-", "×", "÷", "=", "≈", ">", "<", "≥", "≤", "≠",
                                            "²", "³", "⁰", "¹", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹",
                                            "√", "/", "^", "(", ")"]
 
