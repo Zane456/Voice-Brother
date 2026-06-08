@@ -398,7 +398,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         do {
             try FileManager.default.createDirectory(atPath: savePath, withIntermediateDirectories: true)
         } catch {
-            print("[MeetingService] Failed to create save directory: \(error)")
+            NSLog("%@", "[MeetingService] Failed to create save directory: \(error)")
         }
 
         let formatter = DateFormatter()
@@ -439,7 +439,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 interleaved: false
             )
         } catch {
-            print("[MeetingService] Failed to open audio WAV for writing: \(error)")
+            NSLog("%@", "[MeetingService] Failed to open audio WAV for writing: \(error)")
             audioFile = nil
             audioFilePath = nil
         }
@@ -507,7 +507,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
             }
             try content.write(toFile: path, atomically: true, encoding: .utf8)
         } catch {
-            print("[MeetingService] Failed to finalize markdown: \(error)")
+            NSLog("%@", "[MeetingService] Failed to finalize markdown: \(error)")
         }
     }
 
@@ -602,7 +602,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
         do {
             try audioFile.write(from: buffer)
         } catch {
-            print("[MeetingService] Audio WAV write failed: \(error) — dropping future samples")
+            NSLog("%@", "[MeetingService] Audio WAV write failed: \(error) — dropping future samples")
             self.audioFile = nil
         }
     }
@@ -761,7 +761,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
             self.scStream = stream
             systemAudioCaptured = true
         } catch {
-            print("[MeetingService] System audio capture failed: \(error). Continuing with microphone only.")
+            NSLog("%@", "[MeetingService] System audio capture failed: \(error). Continuing with microphone only.")
             // The stream never started — discard the recorder so its empty
             // .mov file doesn't linger.
             self.screenRecorder?.cancel()
@@ -880,7 +880,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                 try? FileManager.default.removeItem(atPath: audioPath)
             }
             audioFilePath = nil
-            print("[MeetingService] Discarded empty meeting (no transcribed segments).")
+            NSLog("%@", "[MeetingService] Discarded empty meeting (no transcribed segments).")
             markdownFilePath = nil
         } else {
             finalizeMarkdown()
@@ -919,7 +919,7 @@ final class MeetingService: NSObject, ObservableObject, MeetingServiceProtocol {
                     NotificationCenter.default.post(name: .meetingFilesDidChange, object: nil)
                 } catch {
                     self.summaryError = error.localizedDescription
-                    print("[MeetingService] Summarization failed: \(error)")
+                    NSLog("%@", "[MeetingService] Summarization failed: \(error)")
                 }
                 if self.processingMarkdownPath == path {
                     self.processingMarkdownPath = nil
