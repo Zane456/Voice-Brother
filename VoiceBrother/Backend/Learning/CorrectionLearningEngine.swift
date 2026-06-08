@@ -29,13 +29,77 @@ final class CorrectionLearningEngine {
     /// after the user's manual rules when processing each transcription.
     private(set) var activeRules: [ReplacementRule] = []
 
+    /// Common spoken words / fillers / pronouns that recur in almost every
+    /// utterance. An auto-learned rule whose `from` is one of these fires on
+    /// nearly every transcription — the exact "好了 → 我的ext" failure: the user
+    /// rewrote one sentence's content, the engine generalised it into a global
+    /// replace. We never promote an edit on these into a rule. Manual rules are
+    /// NOT affected — this gates auto-learning only. Length alone can't catch
+    /// these (legit number rules like 一百/二十 are the same 2–4 chars), so an
+    /// explicit stoplist is the real defense.
+    private static let nonLearnableTerms: Set<String> = [
+        // 应答 / 语气词
+        "好", "好的", "好了", "好吧", "好啊", "好嘞", "行", "行了", "可以", "没问题",
+        "没事", "嗯", "嗯嗯", "嗯哼", "哦", "噢", "呃", "啊", "呀", "哈", "哈哈",
+        "对", "对的", "对对", "对吧", "是", "是的", "是吧", "是啊", "OK", "ok", "Ok",
+        // 指代 / 连接 / 口头禅
+        "那", "那个", "这", "这个", "就是", "就", "然后", "还有", "而且", "但是",
+        "不过", "所以", "因为", "如果", "这样", "那样", "这样子", "那样子",
+        "现在", "怎么", "什么", "为什么", "怎么样",
+        // 人称
+        "我", "你", "他", "她", "它", "我们", "你们", "他们", "她们",
+        "我的", "你的", "他的", "她的", "大家",
+    ]
+
     private init() {}
+
+    /// Edge punctuation stripped before matching the stoplist — CJK sentence
+    /// marks + full-width space only. Deliberately NOT the whole
+    /// `.punctuationCharacters` set: that also strips ASCII `! ? . _ #` etc., so
+    /// a legit ASCII correction like "OK!" would normalize to "OK" and get
+    /// wrongly skipped as a common word.
+    private static let edgePunctuation = CharacterSet(charactersIn: "。，、！？；：…—　")
+
+    /// Strip surrounding whitespace and CJK sentence punctuation so "好了。"
+    /// still matches the "好了" stoplist entry.
+    private func normalizedTerm(_ s: String) -> String {
+        s.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(Self.edgePunctuation))
+    }
 
     /// Wire up at app launch. Loads rules learned in previous sessions.
     func configure(configManager: ConfigManager) {
         self.configManager = configManager
         self.activeRules = journal.loadRules()
+        migrateOrphanedLearnedRules()
         journal.log("ENGINE  启动 — 已加载 \(activeRules.count) 条已学规则")
+    }
+
+    /// One-time self-heal: evict `.learned` rules that an older app version
+    /// persisted into `AppConfig.replacements` (the manual store) instead of the
+    /// isolated learned store. Such orphans keep firing via the recording path
+    /// but `forget()` / REVERT can never reach them — and worse, they sit in
+    /// `configManager.replacements`, so `manualConflicts` matches every new
+    /// correction against them and silently blocks all future learning.
+    ///
+    /// Fix: MOVE them into `activeRules` (the isolated store), deduped by `from`.
+    /// They keep working — VoiceService fires `replacements + activeRules`, so
+    /// total behaviour is unchanged — but become manageable again. Idempotent:
+    /// once replacements holds no `.learned` rule, this is a no-op.
+    private func migrateOrphanedLearnedRules() {
+        guard let configManager else { return }
+        let orphans = configManager.replacements.filter { $0.source == .learned }
+        guard !orphans.isEmpty else { return }
+
+        var existingFroms = Set(activeRules.map { $0.from })
+        var moved = 0
+        for orphan in orphans where !existingFroms.contains(orphan.from) {
+            activeRules.append(orphan)
+            existingFroms.insert(orphan.from)
+            moved += 1
+        }
+        configManager.replacements.removeAll { $0.source == .learned }
+        journal.persistRules(activeRules)
+        journal.log("MIGRATE 从手动规则迁出 \(orphans.count) 条孤儿 learned 规则（实际并入 \(moved) 条，去重后共 \(activeRules.count) 条）")
     }
 
     /// Outcome of a `learn` call, so the UI can show a brief confirmation.
@@ -87,6 +151,20 @@ final class CorrectionLearningEngine {
                                message: "已撤销之前学的：\(stale.from) → \(stale.to)")
         }
 
+        // Refuse to learn when the changed span is just a common spoken word /
+        // filler / pronoun. Such a rule would fire on nearly every utterance —
+        // the "好了 → 我的ext" failure mode. Gates auto-learning only; manual
+        // rules can still target these words deliberately.
+        // MUST run AFTER the REVERT check above: a stale rule whose `to` is a
+        // common word is undone by reverse-editing (pair.from == that word). If
+        // this gate ran first it would short-circuit and the rule could never
+        // be undone.
+        if Self.nonLearnableTerms.contains(normalizedTerm(pair.from)) {
+            journal.log("SKIP    常用口语词 \"\(pair.from)\" → \"\(pair.to)\"，不自动学（避免每句误触发）")
+            return LearnResult(learned: false, from: pair.from, to: pair.to,
+                               message: "「\(pair.from)」是常用词，已跳过自动学习")
+        }
+
         // Refuse pairs that overlap a manual rule's `from` or `to`. If a
         // learned rule's `from` appears anywhere in a manual rule's input or
         // output (or vice versa), a single transcription could trip both rules
@@ -94,6 +172,18 @@ final class CorrectionLearningEngine {
         if let manual = configManager?.replacements,
            let conflict = manual.first(where: { manualConflicts(pair: pair, with: $0) }) {
             journal.log("SKIP    pair \"\(pair.from)\" → \"\(pair.to)\" 与手动规则 \"\(conflict.from)\" → \"\(conflict.to)\" 重叠")
+            return LearnResult(learned: false, from: pair.from, to: pair.to, message: "")
+        }
+
+        // Same guard, but against OTHER learned rules — without it, rule A's
+        // output can be re-rewritten by a later learned rule B (好的→码投→Modo
+        // chaining), since VoiceService applies all learned rules in sequence.
+        // Exclude the same-`from` rule: that's the update/dedup case handled
+        // below, and it always "overlaps" itself.
+        if let conflict = activeRules.first(where: {
+            $0.from != pair.from && manualConflicts(pair: pair, with: $0)
+        }) {
+            journal.log("SKIP    pair \"\(pair.from)\" → \"\(pair.to)\" 与已学规则 \"\(conflict.from)\" → \"\(conflict.to)\" 重叠")
             return LearnResult(learned: false, from: pair.from, to: pair.to, message: "")
         }
 

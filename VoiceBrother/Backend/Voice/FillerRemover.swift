@@ -109,8 +109,11 @@ enum FillerRemover {
         // "那个" — keep only when followed by a demonstrative follower character
         result = removeNage(from: result)
 
-        // "就是" — remove when at sentence start or after comma (filler usage)
-        result = replacePattern(result, pattern: "(?:^|[，,。.！!？?；;])[\\s]*就是", with: "")
+        // "就是" — remove when at sentence start or after punctuation (filler
+        // usage). Capture the leading boundary as $1 so the punctuation is KEPT
+        // (the old pattern consumed it, merging "好的。就是这个" → "好的这个").
+        // `(?!说)` keeps the conjunction "就是说" intact.
+        result = replacePattern(result, pattern: "(^|[，,。.！!？?；;])[\\s]*就是(?!说)", with: "$1")
 
         // "然后" — remove when repeated or at sentence start as filler
         result = replacePattern(result, pattern: "(?:^|[，,])[\\s]*然后[，,]?[\\s]*然后", with: "")
@@ -135,6 +138,12 @@ enum FillerRemover {
     /// legitimate question/confirmation particles ("对吧？", "是吧！").
     /// Remove in mid-sentence where they act as filler padding
     /// ("对吧，我们继续", "是吧，然后呢").
+    /// Characters that, immediately before 是吧/对吧, fuse it into a verb phrase
+    /// (不是吧 / 就是吧 / 真对吧 / 也是吧 / 还是吧). There the 是/对 belongs to the
+    /// preceding word and only 吧 is the particle, so the span must NOT be
+    /// stripped as filler.
+    private static let compoundLeadChars: Set<Character> = ["不", "就", "真", "也", "还", "可"]
+
     private static func removeMiddleBaParticle(from text: String) -> String {
         let targets = ["是吧", "对吧"]
         var result = text
@@ -155,6 +164,13 @@ enum FillerRemover {
                     } else if let nextChar = result[afterIdx...].first,
                               sentenceEnders.contains(nextChar) {
                         // Before sentence-ending punctuation — keep
+                        output += target
+                        i = afterIdx
+                    } else if i > result.startIndex,
+                              Self.compoundLeadChars.contains(result[result.index(before: i)]) {
+                        // Preceded by 不/就/真… — the 是/对 belongs to that word
+                        // (不是吧 / 就是吧 / 真对吧), only the trailing 吧 is a
+                        // particle. Removing "是吧" here would maim "不是吧"→"不".
                         output += target
                         i = afterIdx
                     } else {

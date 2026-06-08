@@ -141,13 +141,40 @@ enum TextProcessor {
         return String(chars) + " "
     }
 
-    /// Apply replacement rules in order. Each rule performs a literal string replacement.
+    /// Apply replacement rules in order. Each rule performs a literal string
+    /// replacement — EXCEPT when `from` is a pure ASCII alphanumeric token
+    /// (English word / number), where it is bounded so it only matches when not
+    /// flanked by other ASCII letters/digits. Without this, a rule `20`→`二十`
+    /// rewrites `2026`→`二十26`, and `AI`→`人工智能` corrupts `RAID`. CJK has no
+    /// word boundary, so CJK/mixed `from` keeps the plain substring behaviour.
     static func applyReplacements(to text: String, rules: [ReplacementRule]) -> String {
         var result = text
-        for rule in rules {
-            result = result.replacingOccurrences(of: rule.from, with: rule.to)
+        for rule in rules where !rule.from.isEmpty {
+            if isASCIIWordToken(rule.from), let bounded = boundedReplace(result, from: rule.from, to: rule.to) {
+                result = bounded
+            } else {
+                result = result.replacingOccurrences(of: rule.from, with: rule.to)
+            }
         }
         return result
+    }
+
+    /// True when every character is an ASCII letter or digit — the only case
+    /// where flanking characters can spuriously extend a match (`20` in `2026`).
+    private static func isASCIIWordToken(_ s: String) -> Bool {
+        s.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+    }
+
+    /// Replace `from` with `to` only where it is NOT adjacent to another ASCII
+    /// letter/digit. CJK and punctuation neighbours still allow the match, so
+    /// `20`→`二十` fires in `第20名` but not in `2026`. Returns nil if the regex
+    /// can't be built, so the caller falls back to plain replacement.
+    private static func boundedReplace(_ text: String, from: String, to: String) -> String? {
+        let pattern = "(?<![0-9A-Za-z])" + NSRegularExpression.escapedPattern(for: from) + "(?![0-9A-Za-z])"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        let template = NSRegularExpression.escapedTemplate(for: to)
+        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: template)
     }
 }
 
