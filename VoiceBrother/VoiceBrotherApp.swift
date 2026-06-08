@@ -70,14 +70,24 @@ struct VoiceBrotherApp: App {
                                    configManager: config)
     }
 
+    /// Scene id of the single main window. Used by `openWindow(id:)` and the
+    /// AppKit-side `WindowAccessor` bridge.
+    static let mainWindowID = "main"
+
     var body: some Scene {
-        WindowGroup {
+        // Single-instance `Window` (not `WindowGroup`): closing the main
+        // window must be reversible. A WindowGroup window is *destroyed* on
+        // close and dropped from `NSApp.windows`, so the menu-bar "显示主窗口"
+        // had no window left to bring forward and silently no-op'd. A `Window`
+        // scene lets `openWindow(id:)` recreate-or-focus the one instance.
+        Window("Voice Brother", id: Self.mainWindowID) {
             MainWindow()
                 .environmentObject(configManager)
                 .environmentObject(permissionManager)
                 .environmentObject(voiceService)
                 .environmentObject(meetingService)
                 .environmentObject(themeManager)
+                .modifier(MainWindowOpenerCapture())
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 672, height: 800)
@@ -87,18 +97,55 @@ struct VoiceBrotherApp: App {
                     NSApp.orderFrontStandardAboutPanel()
                 }
             }
-            // Standard ⌘, preferences entry — brings the main settings window
-            // to front (and unhides if minimized) so users get the macOS-native
-            // muscle memory for "open preferences".
+            // Standard ⌘, preferences entry — recreate-or-focus the main
+            // window through the same opener the menu bar uses, so it works
+            // even after the window was closed.
             CommandGroup(after: .appSettings) {
                 Button("偏好设置…") {
-                    NSApp.activate(ignoringOtherApps: true)
-                    if let window = NSApp.windows.first(where: { $0.contentView?.subviews.first is NSHostingView<AnyView> || !$0.title.isEmpty })
-                        ?? NSApp.windows.first {
-                        window.makeKeyAndOrderFront(nil)
-                    }
+                    MainWindowOpener.shared.showMain()
                 }
                 .keyboardShortcut(",", modifiers: .command)
+            }
+        }
+    }
+}
+
+/// Bridges AppKit call-sites (menu bar, Dock reopen, ⌘,) to SwiftUI's
+/// `openWindow` action so the single main `Window` can be recreated or
+/// focused from outside the SwiftUI view tree. `open` is captured the first
+/// time the window appears (see `MainWindowOpenerCapture`) and stays valid
+/// for the app's lifetime — including after the window has been closed.
+@MainActor
+final class MainWindowOpener {
+    static let shared = MainWindowOpener()
+    private init() {}
+
+    /// Set by `MainWindowOpenerCapture`; calls `openWindow(id: "main")`.
+    var open: (() -> Void)?
+
+    /// Activate the app and recreate-or-focus the main window.
+    func showMain() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let open {
+            open()
+        } else {
+            // Fallback for the brief pre-capture moment at launch.
+            for window in NSApp.windows where window.canBecomeMain {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+    }
+}
+
+/// Captures SwiftUI's `openWindow` action into `WindowAccessor` so AppKit
+/// code can reopen the main window. Re-set on every appearance to keep the
+/// captured action fresh.
+private struct MainWindowOpenerCapture: ViewModifier {
+    @Environment(\.openWindow) private var openWindow
+    func body(content: Content) -> some View {
+        content.task {
+            MainWindowOpener.shared.open = {
+                openWindow(id: VoiceBrotherApp.mainWindowID)
             }
         }
     }
@@ -134,9 +181,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
-            for window in sender.windows {
-                window.makeKeyAndOrderFront(self)
-            }
+            // Same recreate-or-focus path as the menu bar; `sender.windows` is
+            // empty once the single Window is closed, so the old loop no-op'd.
+            MainActor.assumeIsolated { MainWindowOpener.shared.showMain() }
         }
         return true
     }

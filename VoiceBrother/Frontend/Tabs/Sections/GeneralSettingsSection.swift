@@ -47,7 +47,7 @@ struct GeneralSettingsSection: View {
 
                     Divider().padding(.horizontal, 16)
 
-                    toggleRow(title: "渐进上屏（实验）",
+                    toggleRow(title: "渐进上屏",
                               subtitle: "目标 App 内按打字机节奏逐字键入（浮窗只显示波形）；关闭则现有整段一次性粘贴",
                               isOn: $configManager.typewriterMode)
                 }

@@ -283,10 +283,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func showMainWindow() {
-        NSApp.activate(ignoringOtherApps: true)
-        for window in NSApp.windows where window.canBecomeMain {
-            window.makeKeyAndOrderFront(nil)
-        }
+        // Routed through WindowAccessor so it recreate-or-focuses the single
+        // main window even after it was closed (a closed `Window` is gone from
+        // NSApp.windows, so the old in-place loop had nothing to bring forward).
+        MainWindowOpener.shared.showMain()
     }
 
     @objc private func openMeetingFolder() {
