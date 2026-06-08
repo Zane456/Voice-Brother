@@ -28,7 +28,7 @@ struct GeneralTab: View {
             permissionRefreshTimer?.invalidate()
             permissionRefreshTimer = nil
         }
-        .onChange(of: permissionManager.status) { newStatus in
+        .onChange(of: permissionManager.status) { _, newStatus in
             if newStatus.allGranted, case .error = voiceService.state {
                 voiceService.stop()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

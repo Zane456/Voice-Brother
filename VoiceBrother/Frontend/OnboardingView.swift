@@ -156,7 +156,7 @@ struct OnboardingView: View {
             refreshTimer?.invalidate()
             refreshTimer = nil
         }
-        .onChange(of: permissionManager.status) { newStatus in
+        .onChange(of: permissionManager.status) { _, _ in
             updateCurrentStep()
             if permissionManager.needsRelaunch {
                 // Screen Recording just flipped denied → granted. Process must

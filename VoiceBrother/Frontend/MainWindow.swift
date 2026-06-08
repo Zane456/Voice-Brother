@@ -175,7 +175,7 @@ struct MainWindow: View {
             }
             windowFocused = true
         }
-        .onChange(of: permissionManager.status) { newStatus in
+        .onChange(of: permissionManager.status) { _, newStatus in
             if newStatus.allGranted {
                 if voiceService.state == .stopped {
                     voiceService.start()
@@ -184,7 +184,7 @@ struct MainWindow: View {
             // Do NOT re-open onboarding here — once the user has dismissed it,
             // the permission banner is the path back to the system settings.
         }
-        .onChange(of: showOnboarding) { isShowing in
+        .onChange(of: showOnboarding) { _, isShowing in
             if !isShowing {
                 windowFocused = true
                 if voiceService.state == .stopped {
