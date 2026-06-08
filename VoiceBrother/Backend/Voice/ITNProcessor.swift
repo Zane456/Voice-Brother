@@ -559,7 +559,6 @@ enum ITNProcessor {
         let mathSymbols: Set<Character> = ["+", "-", "×", "÷", "=", ">", "<", "≥", "≤", "≠",
                                            "²", "³", "⁰", "¹", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹",
                                            "√", "/", "^", "(", ")"]
-        let cnDigitAndUnit = "零一二两三四五六七八九十百千万亿"
 
         var result = Array(text)
         var changed = true
