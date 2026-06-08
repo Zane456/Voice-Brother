@@ -491,6 +491,10 @@ enum ITNProcessor {
         result = result.replacingOccurrences(of: "大于等于", with: "≥")
         result = result.replacingOccurrences(of: "小于等于", with: "≤")
         result = result.replacingOccurrences(of: "不等于", with: "≠")
+        // "不大于"=≤、"不小于"=≥ — 必须在裸"大于"/"小于"之前，否则
+        // "电压不大于600V"会被切成"电压不>600V"这种垃圾。
+        result = result.replacingOccurrences(of: "不大于", with: "≤")
+        result = result.replacingOccurrences(of: "不小于", with: "≥")
         result = result.replacingOccurrences(of: "大于", with: ">")
         result = result.replacingOccurrences(of: "小于", with: "<")
 
