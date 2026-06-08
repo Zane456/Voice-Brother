@@ -534,9 +534,12 @@ enum ITNProcessor {
 
         // "平方" → "²" — "的" is optional (ASR often omits it)
         // Negative lookahead: don't convert "平方米/千米/公里" (area units)
-        result = replacePattern(result, pattern: "(?:的)?平方(?!米|千米|公里|厘米|分米|毫米)", with: "²")
+        // 排除 米/千米... 面积单位，并排除 根/体（平方根、立方体）这类把"平方/立方"
+        // 当词头的复合词——否则"平方根"→"²根"、"立方体"→"³体"。和/差 是歧义字
+        // （"A的平方和B的平方"的和=and），不排除以免假阳性。
+        result = replacePattern(result, pattern: "(?:的)?平方(?!米|千米|公里|厘米|分米|毫米|根|体)", with: "²")
         // "立方" → "³" — same optional "的"
-        result = replacePattern(result, pattern: "(?:的)?立方(?!米|千米|公里|厘米|分米|毫米)", with: "³")
+        result = replacePattern(result, pattern: "(?:的)?立方(?!米|千米|公里|厘米|分米|毫米|根|体)", with: "³")
 
         // "N次方" — "的" is optional; convert known small exponents to superscript
         let superscripts: [String: String] = [
