@@ -20,7 +20,7 @@ enum FillerRemover {
         "就是说", "怎么说呢", "你知道吧", "我觉得吧",
         "说实话", "老实说",
         // Common spoken padding
-        "反正", "其实吧", "嘛",
+        "反正", "其实吧",
     ]
 
     /// Fillers that need context check — may be legitimate words.
@@ -129,6 +129,10 @@ enum FillerRemover {
         // 句尾 = 紧跟句末标点（？。！）或字符串结尾。
         // 句中 = 后面还有内容（逗号、其他字），属于口头禅。
         result = removeMiddleBaParticle(from: result)
+
+        // 单字"嘛" — 句末/句中语气词，作为 filler 删除；但用负向后顾保护固定词
+        // "干嘛"（gàn má，"干什么 / 为什么"）。无条件删除会把"你干嘛？"砍成"你干？"。
+        result = replacePattern(result, pattern: "(?<!干)嘛", with: "")
 
         return result
     }
