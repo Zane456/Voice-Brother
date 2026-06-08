@@ -67,7 +67,10 @@ final class FocusObserver {
             kAXFocusedUIElementAttribute as CFString,
             &focusedRef
         )
-        guard focusResult == .success, let focusedAny = focusedRef else { return false }
+        guard focusResult == .success, let focusedAny = focusedRef,
+              CFGetTypeID(focusedAny) == AXUIElementGetTypeID() else { return false }
+        // 类型已校验，强转不会 trap。原来直接 as! 在 Accessibility 返回非
+        // AXUIElement（少见但可能）时会整个进程崩溃；持续运行的观察器经不起这种崩。
         let focused = focusedAny as! AXUIElement
 
         var roleRef: CFTypeRef?
