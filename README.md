@@ -60,7 +60,7 @@
 
 ## 安装
 
-需要 macOS 14+ 和 Xcode 15+。
+需要 macOS 14+ 和 Xcode 16+。
 
 ```bash
 git clone https://github.com/Zane456/Voice-Brother.git
@@ -84,7 +84,7 @@ xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet
 
 | 功能 | 说明 |
 | :--- | :--- |
-| **按住即录** | 按住触发键(默认右 ⌘)录音,松开自动识别并输入;录音中按 ESC 取消 |
+| **按住即录** | 按住触发键(默认右 Option ⌥)录音,松开自动识别并输入;录音中按 ESC 取消 |
 | **鼠标侧键触发** | 触发键支持鼠标侧向按键,不必长按键盘,双手不离鼠标也能语音输入 |
 | **4 种 ASR 引擎** | 默认 Qwen3-ASR 本地推理(MLX);也可切 Apple 系统语音,或 OpenAI Whisper / 火山引擎云端 |
 | **可选模型档位** | 0.6B 求快、1.7B 求准,按你的电脑性能挑 |
@@ -106,9 +106,9 @@ xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet
 | **系统级录音** | 同时录系统音频与麦克风,Zoom、腾讯会议、微信语音/视频通话,无论用哪个都能录 |
 | **自动分段转写** | 录音自动分段并转写,产出带时间戳的 `.md` 纪要 |
 | **LLM 会议摘要** | 录音结束后自动用 LLM 整理为对话格式的会议纪要 |
-| **独立模型** | 语音输入用 0.6B 求快、会议转写用 1.7B 求准,两个实例完全独立 |
+| **独立模型** | 会议转写按 `meetingASRModel` 单独选档,可让语音用 0.6B、会议用 1.7B,两个 Qwen 实例完全独立 |
 | **多语言会议** | 会议转写支持中文、英文、日语及自动检测 |
-| **可选屏幕录制** | 可同时录 `.mov` 屏幕画面,支持原画 / HD / SD 三档画质 |
+| **可选屏幕录制** | 可同时录 `.mov` 屏幕画面,原画 / 高清两档画质 |
 | **重新转写** | 对已完成的录音切换 ASR 模型重跑 |
 
 ### LLM 集成:9 家供应商,国内外通吃
@@ -119,7 +119,7 @@ xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet
 | **海外** | OpenAI · Claude (Anthropic) · OpenRouter |
 | **本地** | Ollama |
 
-每个供应商都有一键**连接测试**,所有 API Key 均存于系统 **Keychain**,绝不明文落盘。同一套 LLM 层同时服务于语音润色和会议摘要,两者可分别配置。
+每个供应商都有一键**连接测试**。API Key 存在本地受限文件(`~/Library/Application Support/VoiceBrother/credentials.json`,**0600 权限、仅你自己可读**),不写进 UserDefaults、不进日志,`defaults read` 也读不到。同一套 LLM 层同时服务于语音润色和会议摘要,两者可分别配置。
 
 > 此外还有:菜单栏常驻 + 全局快捷键、实时波形录音浮窗、可搜索的转写历史 + 高频关键词词云 + 使用统计、按功能分别设置自动清理、多套 UI 主题、隐私模式(关闭后不在日志中记录转写内容)。
 
