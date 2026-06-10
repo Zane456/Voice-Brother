@@ -22,22 +22,15 @@
 ### 视觉风格
 保留 Voice Aura 的 **Glassmorphism 风格**，色板和动画参数从 Python 版搬运。布局结构参考 Type4Me 的两栏式设计。注意：Voice Aura 的配色是**自定义色板**，不是系统语义色。
 
-### 从 Python 版翻译
-`keyboard_listener.py`、`voice_service.py`、`config.py`、`meeting_service.py` 的核心逻辑可直接翻译。Python 版源码在 `~/IDE project/Voice-Aura/`。
+### 从 Python 版翻译（已完成，历史信息）
+核心逻辑当初从 Voice Aura Python 版翻译而来。**Python 源码目录 `~/IDE project/Voice-Aura/` 已删除**，翻译已全部落地到 Swift 代码，无需再回看。
 
 ## Skill 路由
 
-| 场景 | 使用的 Skill |
-|------|------------|
-| SwiftUI 两栏布局、窗口管理、AppKit 互操作、菜单栏、键盘快捷键 | `macos-hig-designer` |
-| 毛玻璃材质、卡片/行/徽章组件、间距体系、SF Symbols 用法 | `liquid-glass`（含 `references/components.md` 和 `references/apple-hig.md`） |
-| UI 整体设计评审、风格选择、调色板 | `ui-ux-pro-max`（全局 skill） |
-| iOS/SwiftUI 通用开发模式（仅参考，注意过滤 iOS-only 内容） | `minimax-skills:ios-application-dev`（全局 plugin） |
-
-### Skill 使用判断
-- 写 SwiftUI 视图 → 先查 `liquid-glass` 的组件模式，再对照 `macos-hig-designer` 的 macOS 规范
-- 做 NSPanel / AppKit 互操作 → 查 `macos-hig-designer` 第 10 节 AppKit Interop
-- 做录音浮窗 → 参数见 `RecordingOverlayPanel.swift`，`macos-hig-designer` 提供 NSPanel 的现代实践
+早期路由的 `macos-hig-designer` / `liquid-glass` / `ui-ux-pro-max` / `minimax-skills:ios-application-dev` **已全部卸载，不复存在**（2026-06-10 harness 体检确认），不要再尝试调用。现行做法：
+- 写 SwiftUI 视图 / 毛玻璃风格 → 直接参考 `Frontend/Components/` 现有组件（ColorExtension、GlassmorphismBackground 等），风格已沉淀在代码里
+- 做录音浮窗 → 参数见 `RecordingOverlayPanel.swift`
+- UI 设计评审需要时 → `ui-ux-pro-max` 等可重新安装后再路由，安装前别引用
 
 ## MCP / 工具路由
 
@@ -49,8 +42,7 @@
 | 读任意网页内容 | `tavily_extract`（最完整）→ `web-reader`（快速） |
 | 理解开源项目结构/代码 | `zread`（get_repo_structure / read_file / search_doc） |
 | 分析截图 / UI 设计稿 / 技术图表 | `zai-mcp-server`（analyze_image / ui_diff_check 等） |
-| 读 Voice Aura Python 源码（翻译参考） | 直接 `Read` 工具读 `~/IDE project/Voice-Aura/` |
-| 跨会话搜索历史上下文 | `claude-mem` search（不传 project 参数可全量检索） |
+| 跨会话搜索历史上下文 | `sess` skill（cc-memory；`claude-mem` MCP 已不存在） |
 
 ## 开发阶段
 
@@ -113,6 +105,14 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 5. **改 Types/枚举**：全局搜索所有 switch/case，确认无遗漏
 6. **改完后必须自动构建并重启应用**（用户不使用 Xcode，所有操作由命令行完成）。**只走 Release 构建 + `/Applications/Voice Brother.app` 固定路径**，否则 TCC 权限每次重建都会被 macOS 重置（详见下面"为什么必须 Release"）：
    ```bash
+   # 0. 先 resolve 依赖并给 speech-swift 打 cache-fast-path 补丁（幂等，必须在 build 前）
+   xcodebuild -resolvePackageDependencies \
+     -project "~/IDE project/Voice Brother/VoiceBrother.xcodeproj" \
+     -scheme VoiceBrother \
+     -derivedDataPath "~/IDE project/Voice Brother/build/.tmp-build" \
+     -skipPackagePluginValidation
+   bash "~/IDE project/Voice Brother/scripts/patch-speech-swift.sh"
+
    # 1. Release 构建到临时路径（关掉 base entitlements 注入，避免 get-task-allow）
    xcodebuild build \
      -project "~/IDE project/Voice Brother/VoiceBrother.xcodeproj" \
@@ -148,7 +148,9 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 
 ### speech-swift `HuggingFaceDownloader.downloadWeights` 加 cache-fast-path
 
-**位置**：`~/Library/Developer/Xcode/DerivedData/VoiceBrother-*/SourcePackages/checkouts/speech-swift/Sources/AudioCommon/HuggingFaceDownloader.swift`
+**打法（2026-06-10 起自动化）**：`scripts/patch-speech-swift.sh` 在构建第 0 步自动打（见上方构建命令），锚点字符串替换、幂等。**不再需要手工重打**——构建流程本身每次 resolve 后都会重新打。
+
+> 历史教训：补丁曾只手工打在 DerivedData 里，而实际构建用的 checkout 在 `build/.tmp-build/SourcePackages`（且每次构建后被 rm），导致补丁静默蒸发、文档却声称生效（2026-06-10 harness 体检发现线上版本一直没补丁）。**补丁必须长在构建流程里，不能长在某个会被删的目录里。**
 
 **为什么打这个补丁**：原版每次启动都调 `hub.snapshot()`，命中缓存的情况下仍然向 HuggingFace 发 6+ 次 HEAD 请求验证 etag。国内网络下额外多花 5-30 秒，体感"模型启动太久"。
 
@@ -158,12 +160,7 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 
 **判断完整性的依据**：HF metadata 文件只有在下载完整成功且写入 commit_hash/etag 后才会生成，所以它存在 ⇔ 文件不是半成品。
 
-**何时需要重打**：
-- 删除 `~/Library/Developer/Xcode/DerivedData/VoiceBrother-*` 之后
-- `Package.resolved` 里的 speech-swift 版本变更后（SPM 会重新 fetch）
-- 任何触发 SPM resolve 的操作之后
-
-**重打步骤**：在补丁文件内搜 `VoiceBrother local patch` 找原位置，参照 git diff 重新粘贴两段。
+**锚点失配时**：speech-swift 上游改了 `HuggingFaceDownloader.swift` 会让脚本报错退出（不会静默跳过），此时参照脚本内的两段 Swift 代码人工重新移植。
 
 **根治方向**：往 speech-swift 上游提 PR 加 `localFilesOnly: Bool` 参数，命中缓存时跳过 hub.snapshot。
 
@@ -191,8 +188,13 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 ### ✅ 已修：显示主窗口点击无效
 主窗口由 `WindowGroup` 改为单实例 `Window(id:"main")`——WindowGroup 窗口关闭即销毁、从 NSApp.windows 移除，菜单"显示主窗口"的遍历兜底因此空跑。改用 `MainWindowOpener` 单例桥接 SwiftUI `openWindow`，菜单 / ⌘, / Dock 重开三条路径统一走它。**不要改回 WindowGroup。**（`WindowCornerRadius.swift` 已有同名 `WindowAccessor`，桥故命名 MainWindowOpener 避让。）
 
-### ✅ 已修：自学习引擎误学常用词
-`CorrectionLearningEngine` 从历史编辑提取替换规则时会误学（曾出「好了→我的ext」每句触发）。守卫：`nonLearnableTerms` 常用词黑名单 + `applyReplacements` 对纯 ASCII 的 `from` 按词边界匹配（防 `20` 误伤 `2026`、`AI` 误伤 `RAID`）。**回归红线**：黑名单闸必须在 `learn()` 的 REVERT 分支**之后**，否则 `to` 是常用词的已学规则永远撤不掉。坏规则数据 + 清理见 memory。
+### ✅ 已修：自学习引擎误学常用词 + 坏规则夜间复活
+学习规则有**两条独立来源**，排查误学必须都查：
+1. App 内 `CorrectionLearningEngine`（HistoryTab 编辑触发，有 `nonLearnableTerms` 黑名单 + `applyReplacements` 对纯 ASCII `from` 按词边界匹配，防 `20` 误伤 `2026`）
+2. `extensions/dynamic-hotwords/update_hotwords.py` —— **launchd 每晚 22:00** 从 history.db 挖规则，`defaults write` 直接写进 UserDefaults 手动区并**重启 app**；app 启动时 `migrateOrphanedLearnedRules` 把它们搬进 learned_rules.json
+
+「好了→我的ext」反复复活的根因 = 路径 2 绕过 learn() 的黑名单闸。已修（2026-06-10）：脚本端 `is_replacement_candidate` 加 `CJK_NON_LEARNABLE` 黑名单 + 修 `isalnum()` 误把汉字当字母数字（限定 ASCII，恢复"拒中文→中文规则"原意）；app 端 `evictNonLearnableRules()` 启动清扫兜底。
+**回归红线**：① 黑名单闸必须在 `learn()` 的 REVERT 分支**之后**，否则 `to` 是常用词的已学规则永远撤不掉；② Swift 与 Python 两份黑名单需手动同步；③ learning.log 里若再现 22:00 MIGRATE 行带常用词规则 = 复活回路回归。坏规则数据 + 清理见 memory。
 
 ### P1（未修）：MeetingService 穿透访问 VoiceService 内部
 `voiceService?.keyboardListenerRef?.isMeetingActive` 绕过 Protocol 层。**已用锁保护 `isMeetingActive` getter/setter**，但架构层面仍破坏了前后端解耦。后续可在 VoiceServiceProtocol 中添加 `func setMeetingActive(_:)`。（`asrEngineRef` 穿透已随会议独立模型一并移除。）
