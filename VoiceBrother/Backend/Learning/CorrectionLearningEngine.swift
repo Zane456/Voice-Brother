@@ -71,6 +71,7 @@ final class CorrectionLearningEngine {
         self.configManager = configManager
         self.activeRules = journal.loadRules()
         migrateOrphanedLearnedRules()
+        evictNonLearnableRules()
         journal.log("ENGINE  启动 — 已加载 \(activeRules.count) 条已学规则")
     }
 
@@ -100,6 +101,24 @@ final class CorrectionLearningEngine {
         configManager.replacements.removeAll { $0.source == .learned }
         journal.persistRules(activeRules)
         journal.log("MIGRATE 从手动规则迁出 \(orphans.count) 条孤儿 learned 规则（实际并入 \(moved) 条，去重后共 \(activeRules.count) 条）")
+    }
+
+    /// Sweep resident learned rules whose `from` is a common spoken word.
+    /// `learn()` refuses to CREATE such rules, but that gate only covers the
+    /// in-app path — the dynamic-hotwords launchd script writes learned rules
+    /// straight into UserDefaults, and `migrateOrphanedLearnedRules` then
+    /// imports them here unchecked. That bypass is how "好了 → 我的ext" kept
+    /// resurrecting nightly after every cleanup. Runs each launch; no-op when
+    /// nothing matches.
+    private func evictNonLearnableRules() {
+        let bad = activeRules.filter { Self.nonLearnableTerms.contains(normalizedTerm($0.from)) }
+        guard !bad.isEmpty else { return }
+        let badIDs = Set(bad.map { $0.id })
+        activeRules.removeAll { badIDs.contains($0.id) }
+        journal.persistRules(activeRules)
+        for rule in bad {
+            journal.log("EVICT   清除常用词规则 \"\(rule.from)\" → \"\(rule.to)\"（黑名单兜底，外部注入）")
+        }
     }
 
     /// Outcome of a `learn` call, so the UI can show a brief confirmation.

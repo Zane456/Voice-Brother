@@ -105,6 +105,18 @@ context option options config configs default defaults setting settings preferen
 cc ok no go us uk or it is in on at to of be by my we he so up do am as if an
 """.split())
 
+# 中文常用口语词黑名单——与 app 端 CorrectionLearningEngine.nonLearnableTerms 同步。
+# wrong 是这些词时，用户的编辑几乎都是"改写这句内容"而非"修 ASR 错字"；
+# 学成全局替换会每句误触发（2026-06-08「好了→我的ext」事故，本脚本每晚把它复活）。
+CJK_NON_LEARNABLE = set("""
+好 好的 好了 好吧 好啊 好嘞 行 行了 可以 没问题 没事 嗯 嗯嗯 嗯哼 哦 噢 呃 啊 呀 哈 哈哈
+对 对的 对对 对吧 是 是的 是吧 是啊
+那 那个 这 这个 就是 就 然后 还有 而且 但是 不过 所以 因为 如果 这样 那样 这样子 那样子
+现在 怎么 什么 为什么 怎么样
+我 你 他 她 它 我们 你们 他们 她们 我的 你的 他的 她的 大家
+""".split())
+CJK_EDGE_PUNCT = '。，、！？；：…—　 \t'
+
 # 物理量下标符号：V_o, C_b, L_b, i_b, dv_dt
 SUBSCRIPT_VAR_RE = re.compile(r'^[A-Za-z]{1,3}_[a-z0-9]{1,3}$')
 
@@ -234,6 +246,8 @@ def is_replacement_candidate(wrong: str, right: str) -> bool:
     """判断 (wrong, right) 是否值得作为替换规则。严格过滤是为了保精度——
     替换规则一旦生效会硬改所有匹配字符串，一条错规则比十条空规则更糟。"""
     if not wrong or not right or wrong == right: return False
+    # 常用口语词做 wrong 必然每句误触发，无条件拒绝（好了→我的ext 事故）
+    if wrong.strip(CJK_EDGE_PUNCT) in CJK_NON_LEARNABLE: return False
     if len(wrong) < 2: return False                       # 单字 wrong 误伤太多
     if len(right) < 2: return False                       # 单字 right 太通用（如"好""是"）
     if len(wrong) > RULE_MAX_WRONG_LEN: return False
@@ -251,7 +265,9 @@ def is_replacement_candidate(wrong: str, right: str) -> bool:
     if sum(1 for c in wrong if '一' <= c <= '鿿') > 4: return False
     # right 必须以字母/数字为主（ASR 错听对应的真词通常是英文专名或数字 ITN，
     # 不应该是中文→中文替换——后者用 LLM polish 更合适，硬规则做反而危险）
-    alnum = sum(1 for c in right if c.isalnum())
+    # 注意必须限定 ASCII：汉字的 str.isalnum() 也是 True，不限定的话
+    # 中文→中文规则（然后→可以）会穿过这道闸
+    alnum = sum(1 for c in right if c.isascii() and c.isalnum())
     if alnum / len(right) < 0.5: return False
     return True
 
