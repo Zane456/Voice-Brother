@@ -127,17 +127,6 @@ xcodebuild build -project VoiceBrother.xcodeproj -scheme VoiceBrother -quiet
 
 ## 工作原理
 
-```mermaid
-graph LR
-    A[按住快捷键 / 鼠标侧键] --> B[录音]
-    B --> C[Qwen3-ASR · MLX · 本机推理]
-    C --> D[语气词过滤 + 热词 + 替换规则]
-    D --> E{是否 LLM 润色}
-    E -- 是 --> F[LLM 重写]
-    F --> G[粘贴到光标处]
-    E -- 否 --> G
-```
-
 **1. 捕获**。`CGEventTap` 全局监听触发键(键盘修饰键或鼠标侧键),按下开始录音,松开停止。
 
 **2. 转写**。音频送进运行在 Apple Silicon 上、经 MLX 跑的 Qwen3-ASR 模型。除非你明确选了云端引擎,否则数据不出本机。
