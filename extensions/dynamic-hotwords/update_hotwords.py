@@ -43,6 +43,10 @@ APP_DOMAIN = "com.voicebrother.app"
 SCRIPT_DIR = Path(__file__).resolve().parent
 STATE_DIR = SCRIPT_DIR / "state"
 MANUAL_FILE = STATE_DIR / "hotwords_manual.json"
+# 用户可维护的"永不当热词"名单。纯逐字母拼读的缩写（PWM/GND/ZVS…）逐字母念
+# 不会被 ASR 听错，当热词零收益还挤占 prompt 预算——列进这里，挖掘/写入都跳过。
+# 大小写不敏感匹配。想恢复某个词，从本文件删掉即可。
+EXCLUDE_FILE = STATE_DIR / "hotwords_exclude.json"
 LAST_RUN_FILE = STATE_DIR / "last_run.json"
 LOG_FILE = STATE_DIR / "update.log"
 
@@ -483,7 +487,7 @@ def write_hotwords(hotwords: list) -> bool:
 
 # ─── 核心算法 ───────────────────────────────────────────
 
-def mine_auto_hotwords(asr_records, assistant_records, user_added, manual_set, budget):
+def mine_auto_hotwords(asr_records, assistant_records, user_added, manual_set, budget, exclude_lc=frozenset()):
     """综合 Claude 回复频次 + ASR 召回缺口 + 用户手动编辑添加的 token，挖出 budget 个候选热词。
 
     打分：
@@ -524,6 +528,7 @@ def mine_auto_hotwords(asr_records, assistant_records, user_added, manual_set, b
     for tok, c_freq in merged_claude.most_common(2000):
         if not is_proper_noun(tok): continue
         if tok.lower() in manual_lc: continue
+        if tok.lower() in exclude_lc: continue   # 纯拼读缩写永不当热词
         u_added = merged_user_added.get(tok, 0)
         # 入围条件：Claude 频次够高 OR 用户至少手动加过 1 次
         if c_freq < MIN_CLAUDE_FREQ and u_added < 1: continue
@@ -569,6 +574,18 @@ def load_manual() -> list:
         except json.JSONDecodeError:
             log(f"WARN: manual file corrupted, treating as empty")
             return []
+
+
+def load_exclude() -> set:
+    """读"永不当热词"名单，返回小写集合（大小写不敏感匹配）。文件不存在＝空集。"""
+    if not EXCLUDE_FILE.exists():
+        return set()
+    try:
+        with open(EXCLUDE_FILE) as f:
+            return {w.strip().lower() for w in json.load(f) if str(w).strip()}
+    except (json.JSONDecodeError, OSError):
+        log("WARN: exclude file corrupted, treating as empty")
+        return set()
 
 
 def save_last_run(manual, auto, final):
@@ -624,7 +641,10 @@ def run(dry_run: bool = False, no_restart: bool = False):
     log("=" * 60)
     log(f"START dry_run={dry_run} no_restart={no_restart} lookback={LOOKBACK_DAYS}d budget={HOTWORD_BUDGET}")
 
-    manual = load_manual()
+    exclude_lc = load_exclude()
+    manual = [w for w in load_manual() if w.strip().lower() not in exclude_lc]
+    if exclude_lc:
+        log(f"exclude list: {len(exclude_lc)} words (纯拼读缩写永不当热词)")
     log(f"manual-locked words: {len(manual)}")
 
     auto_budget = HOTWORD_BUDGET - len(manual)
@@ -643,11 +663,11 @@ def run(dry_run: bool = False, no_restart: bool = False):
             top_user = ', '.join(f"{t}({c})" for t, c in user_added.most_common(10))
             log(f"top user-edit additions: {top_user}")
         rule_counts, rule_ctx = mine_replacement_rules(asr_records, jsonl['user'])
-        auto = mine_auto_hotwords(asr_records, jsonl['assistant'], user_added, set(manual), auto_budget)
+        auto = mine_auto_hotwords(asr_records, jsonl['assistant'], user_added, set(manual), auto_budget, exclude_lc)
         log(f"auto-mined {len(auto)} candidate hotwords (budget {auto_budget})")
 
     final = list(manual) + [a['token'] for a in auto]
-    final = final[:HOTWORD_BUDGET]
+    final = [w for w in final if w.strip().lower() not in exclude_lc][:HOTWORD_BUDGET]
 
     added, removed = diff_with_previous(final)
     if added or removed:
