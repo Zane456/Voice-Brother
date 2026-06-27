@@ -35,8 +35,9 @@ final class CorrectionLearningEngine {
     /// rewrote one sentence's content, the engine generalised it into a global
     /// replace. We never promote an edit on these into a rule. Manual rules are
     /// NOT affected — this gates auto-learning only. Length alone can't catch
-    /// these (legit number rules like 一百/二十 are the same 2–4 chars), so an
-    /// explicit stoplist is the real defense.
+    /// these (they share the 2–4 char length of ordinary terms), so an explicit
+    /// stoplist is the real defense. Pure number conversions (一百/二十) are
+    /// gated separately by `isITNNumberRule`, not this stoplist.
     private static let nonLearnableTerms: Set<String> = [
         // 应答 / 语气词
         "好", "好的", "好了", "好吧", "好啊", "好嘞", "行", "行了", "可以", "没问题",
@@ -64,6 +65,23 @@ final class CorrectionLearningEngine {
     /// still matches the "好了" stoplist entry.
     private func normalizedTerm(_ s: String) -> String {
         s.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(Self.edgePunctuation))
+    }
+
+    /// Chinese-number characters vs ITN output characters. A pair where `from`
+    /// is purely the former and `to` purely the latter (二十→20、一百→100、
+    /// 百分之一→1%、等于零→=0) is ITNProcessor's job — it converts numbers
+    /// context-aware (skips ordinals like 第二十, branches by date/time/currency).
+    /// A context-free learned string rule is redundant and misfires inside larger
+    /// numbers/ordinals, so we never learn it and evict any that slipped in.
+    /// Pairs containing a letter (V一→V1) are NOT pure-number, so stay learnable.
+    /// Kept in sync with `_is_itn_number_rule` in
+    /// extensions/dynamic-hotwords/update_hotwords.py.
+    private static let cnNumberChars = Set("零〇一二三四五六七八九十百千万亿两点分之等于负")
+    private static let itnOutputChars = Set("0123456789.%=/+-*:")
+    private func isITNNumberRule(from: String, to: String) -> Bool {
+        guard !from.isEmpty, !to.isEmpty else { return false }
+        return from.allSatisfy { Self.cnNumberChars.contains($0) }
+            && to.allSatisfy { Self.itnOutputChars.contains($0) }
     }
 
     /// Wire up at app launch. Loads rules learned in previous sessions.
@@ -111,13 +129,16 @@ final class CorrectionLearningEngine {
     /// resurrecting nightly after every cleanup. Runs each launch; no-op when
     /// nothing matches.
     private func evictNonLearnableRules() {
-        let bad = activeRules.filter { Self.nonLearnableTerms.contains(normalizedTerm($0.from)) }
+        let bad = activeRules.filter {
+            Self.nonLearnableTerms.contains(normalizedTerm($0.from))
+                || isITNNumberRule(from: normalizedTerm($0.from), to: normalizedTerm($0.to))
+        }
         guard !bad.isEmpty else { return }
         let badIDs = Set(bad.map { $0.id })
         activeRules.removeAll { badIDs.contains($0.id) }
         journal.persistRules(activeRules)
         for rule in bad {
-            journal.log("EVICT   清除常用词规则 \"\(rule.from)\" → \"\(rule.to)\"（黑名单兜底，外部注入）")
+            journal.log("EVICT   清除规则 \"\(rule.from)\" → \"\(rule.to)\"（黑名单/数字ITN 兜底，外部注入）")
         }
     }
 
@@ -182,6 +203,17 @@ final class CorrectionLearningEngine {
             journal.log("SKIP    常用口语词 \"\(pair.from)\" → \"\(pair.to)\"，不自动学（避免每句误触发）")
             return LearnResult(learned: false, from: pair.from, to: pair.to,
                                message: "「\(pair.from)」是常用词，已跳过自动学习")
+        }
+
+        // Refuse pure Chinese-number → Arabic/percent/equation conversions —
+        // ITNProcessor owns these (context-aware: skips 第二十 ordinals, branches
+        // by date/time/currency). A flat string rule is redundant and misfires.
+        // MUST run AFTER the REVERT check, same as the stoplist gate above, so an
+        // existing number rule can still be undone by a reverse edit.
+        if isITNNumberRule(from: normalizedTerm(pair.from), to: normalizedTerm(pair.to)) {
+            journal.log("SKIP    数字 ITN 规则 \"\(pair.from)\" → \"\(pair.to)\"，交给 ITNProcessor（避免冗余/序数误触发）")
+            return LearnResult(learned: false, from: pair.from, to: pair.to,
+                               message: "数字转换交给内置规则处理，已跳过")
         }
 
         // Refuse pairs that overlap a manual rule's `from` or `to`. If a
