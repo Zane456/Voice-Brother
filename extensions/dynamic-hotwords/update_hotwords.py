@@ -242,12 +242,28 @@ def extract_diff_spans(asr_text: str, user_text: str):
     return out
 
 
+# 纯数字域字符集：中文数字侧 + ITN 输出侧。两侧都"纯"才算 ITN 规则，
+# 这样 "V一"→"V1"（含字母 V）这类真正的术语规则不会被误杀。
+_CN_NUM_CHARS = set("零〇一二三四五六七八九十百千万亿两点分之等于负")
+_ITN_OUT_CHARS = set("0123456789.%=/+-*:")
+
+
+def _is_itn_number_rule(wrong: str, right: str) -> bool:
+    """wrong 全为中文数字字符、right 全为 ITN 输出字符 ⇒ 属 ITNProcessor 职责。"""
+    return (all(c in _CN_NUM_CHARS for c in wrong) and
+            all(c in _ITN_OUT_CHARS for c in right))
+
+
 def is_replacement_candidate(wrong: str, right: str) -> bool:
     """判断 (wrong, right) 是否值得作为替换规则。严格过滤是为了保精度——
     替换规则一旦生效会硬改所有匹配字符串，一条错规则比十条空规则更糟。"""
     if not wrong or not right or wrong == right: return False
     # 常用口语词做 wrong 必然每句误触发，无条件拒绝（好了→我的ext 事故）
     if wrong.strip(CJK_EDGE_PUNCT) in CJK_NON_LEARNABLE: return False
+    # 纯中文数字→阿拉伯/百分/等式（二十→20、一百→100、百分之一→1%、等于零→=0）
+    # 是 ITNProcessor 的职责：它上下文感知（跳过序数"第二十"、按日期/时间/货币分场景）。
+    # 硬字符串规则无上下文，会在"第二十""二十来个"里误触发，且与 ITN 重复。一律不学。
+    if _is_itn_number_rule(wrong, right): return False
     if len(wrong) < 2: return False                       # 单字 wrong 误伤太多
     if len(right) < 2: return False                       # 单字 right 太通用（如"好""是"）
     if len(wrong) > RULE_MAX_WRONG_LEN: return False
