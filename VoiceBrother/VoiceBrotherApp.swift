@@ -154,7 +154,22 @@ private struct MainWindowOpenerCapture: ViewModifier {
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
 
+    /// Held for the whole process lifetime. Without it, AppKit's default
+    /// sudden-termination + App Nap make this a candidate for the system to
+    /// SIGKILL during idle resource reclamation — the app vanishes with no
+    /// crash report and stays dead (must be reopened manually). That's fatal
+    /// for a menu-bar push-to-talk tool that must answer the global hotkey at
+    /// any moment. The assertion keeps it resident; any exit then runs through
+    /// `applicationWillTerminate` (clean-exit breadcrumb) instead of a silent kill.
+    private var residentActivityToken: NSObjectProtocol?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Opt out of the idle reclamation path described above.
+        ProcessInfo.processInfo.disableSuddenTermination()
+        residentActivityToken = ProcessInfo.processInfo.beginActivity(
+            options: [.background, .suddenTerminationDisabled, .automaticTerminationDisabled],
+            reason: "常驻菜单栏，需随时响应全局按键说话与 CGEventTap")
+
         // Force-load the bundle's AppIcon at launch. Without this, both
         // `NSApp.applicationIconImage` (used in the sidebar avatar, About
         // hero, and onboarding) and the Dock badge can serve a Launch
