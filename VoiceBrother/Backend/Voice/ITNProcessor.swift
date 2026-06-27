@@ -132,11 +132,14 @@ enum ITNProcessor {
         var total = 0
         var current = 0
         var hasUnit = false
+        var lastUnitValue = 0          // value of the most recent 千/百/十 unit
+        var zeroSinceLastUnit = false  // an explicit 零 appeared after that unit
         let chars = Array(text)
 
         for (i, ch) in chars.enumerated() {
             if let d = digitMap[ch] {
                 current = d
+                if d == 0 { zeroSinceLastUnit = true } // explicit 零 placeholder
             } else {
                 switch ch {
                 case "十":
@@ -144,21 +147,36 @@ enum ITNProcessor {
                     total += (current == 0 && i == 0 ? 1 : current) * 10
                     current = 0
                     hasUnit = true
+                    lastUnitValue = 10
+                    zeroSinceLastUnit = false
                 case "百":
                     total += current * 100
                     current = 0
                     hasUnit = true
+                    lastUnitValue = 100
+                    zeroSinceLastUnit = false
                 case "千":
                     total += current * 1000
                     current = 0
                     hasUnit = true
+                    lastUnitValue = 1000
+                    zeroSinceLastUnit = false
                 default:
                     return nil // unexpected character
                 }
             }
         }
 
-        total += current
+        // Colloquial trailing digit drops the unit one level below the last
+        // spoken unit: "七百二" → 二 takes the 十 place → 720 (not 702);
+        // "一千二" → 二 takes the 百 place → 1200. An explicit 零 pins the
+        // digit to the 个 place ("七百零二" → 702). Only 百/千 are ambiguous;
+        // after 十 (or no unit) the trailing digit is already the 个 place.
+        if current != 0 && lastUnitValue >= 100 && !zeroSinceLastUnit {
+            total += current * (lastUnitValue / 10)
+        } else {
+            total += current
+        }
 
         // Must have at least one unit for multi-char strings, or be a single digit
         if chars.count > 1 && !hasUnit && current == total {
