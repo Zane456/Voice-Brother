@@ -10,6 +10,7 @@ protocol VoiceServiceProtocol: ObservableObject {
 
     func start()
     func stop()
+    func setMeetingActive(_ active: Bool)
 }
 
 // MARK: - Meeting Service Protocol

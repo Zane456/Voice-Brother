@@ -111,7 +111,7 @@ struct RecordingOverlayContentView: View {
 
 // MARK: - Recording Overlay Panel
 
-final class RecordingOverlayPanel: NSPanel {
+final class RecordingOverlayPanel: NSPanel, OverlayPresenting {
 
     // MARK: Singleton
 

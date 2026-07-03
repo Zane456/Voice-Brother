@@ -62,7 +62,7 @@ Phase 4:  增强功能               ← 菜单栏、录音历史等
 
 | 共享组件 | 位置 | 被谁使用 | 改了会影响什么 |
 |---------|------|---------|--------------|
-| **RecordingOverlayPanel** (singleton) | `Frontend/Components/RecordingOverlayPanel.swift` | VoiceService（4处）、MeetingService（3处） | 改外观/动画 → 语音和会议的浮窗都变；改 API 签名 → 两个 Service 都要同步改 |
+| **RecordingOverlayPanel** (singleton) | `Frontend/Components/RecordingOverlayPanel.swift` | 后端经 `Shared/OverlayPresenting.swift` 协议注入（两 facade + 协作者共 23 处调用；仅两 facade init 默认值引用 `.shared`） | 改外观/动画 → 语音和会议的浮窗都变；改 API 签名 → 同步改 OverlayPresenting 协议 + 便捷重载的默认值 |
 | **RecordingWaveformView** | `Frontend/Components/RecordingWaveformView.swift` | RecordingOverlayPanel（嵌入） | 改波形 → 语音和会议录音时的浮窗动画都变 |
 | **ColorExtension + glassCard** | `Frontend/Components/ColorExtension.swift` | 所有 Tab 页（GeneralTab、VocabularyTab、HistoryTab、MeetingTab、AboutTab） | 改颜色/修饰符 → 全部页面视觉受影响 |
 | **GlassmorphismBackground** | `Frontend/Components/GlassmorphismBackground.swift` | MainWindow（背景） | 改动画/气泡 → 整个应用背景变化 |
@@ -71,23 +71,24 @@ Phase 4:  增强功能               ← 菜单栏、录音历史等
 | **Protocols.swift** | `Shared/Protocols.swift` | 所有 Service + 所有用 @EnvironmentObject 的 View | 改协议 = 改合同，前后端都要同步 |
 | **Types.swift** | `Shared/Types.swift` | 全局 | 改枚举/结构体 → 所有引用方都要适配 |
 
-### 隐藏的跨服务耦合（改 VoiceService 内部也可能炸 MeetingService）
+### 跨服务耦合（已收敛到 Protocol，2026-07-03 重构）
 
-MeetingService 直接访问了 VoiceService 的内部属性，**不在 Protocol 里**，所以改 VoiceService 内部结构时容易遗漏：
-
-| MeetingService 代码 | 访问的 VoiceService 内部 | 风险 |
-|--------------------|-----------------------|------|
-| `voiceService?.keyboardListenerRef?.isMeetingActive = true` (多处) | `keyboardListenerRef` 属性 + `isMeetingActive` 标志（**已改为锁保护 getter/setter**） | 重命名/重构 KeyboardListener 时会炸 |
-
-**修改 VoiceService 时必须同时检查 MeetingService 对 `keyboardListenerRef` 的引用。**
+原 `voiceService?.keyboardListenerRef?.isMeetingActive` 穿透已消除：MeetingService 一律走 `voiceService?.setMeetingActive(_:)`（VoiceServiceProtocol 方法，内部仍是锁保护）。`keyboardListenerRef` getter 仅 VoiceService 自用。
 ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Qwen 实例，结束即 `unload()`。
+
+### 服务内部结构（2026-07-03 重构后：facade + 协作者）
+
+两个 Service 均为 facade（conform Protocol、持全部 @Published、持协作者强引用），协作者经 weak 回引读 facade：
+- **VoiceService（~1020行）** + `Backend/Voice/`：VoiceAudioChunkStore（线程安全音频缓冲）、AudioEngineController（引擎生命周期+tap+输入设备）、TranscriptionPipeline（转写→注入→润色，**含 MLX reclaim**）、FeedbackSoundPlayer（反馈音）
+- **MeetingService（~490行）** + `Backend/Meeting/`：MeetingAudioPrimitives（线程安全原语）、MeetingTranscriptWriter（markdown+软合并）、MeetingRecordingLoop（录音循环+混音+VAD 切段）、MeetingSegmentTranscriber（段转写，**含 MLX reclaim**）
+- 红线：@Published 只许在 facade；startGeneration / pendingTranscriptionTask 守卫留 facade；SCStreamOutput conformance 留在 MeetingService extension（转发给 loop）
 
 ### 安全修改区域（改了不影响其他模块）
 
 | 文件 | 可以安全修改的范围 |
 |------|-----------------|
-| `Backend/Voice/VoiceService.swift` | 内部实现逻辑（不改 Protocol 接口的前提下）；**但要注意上面的隐藏耦合** |
-| `Backend/Meeting/MeetingService.swift` | 内部实现逻辑（不改 Protocol 接口的前提下） |
+| `Backend/Voice/VoiceService.swift` 及其 4 协作者 | 内部实现逻辑（不改 Protocol 接口、守住上面"服务内部结构"红线的前提下） |
+| `Backend/Meeting/MeetingService.swift` 及其 4 协作者 | 内部实现逻辑（同上） |
 | `Frontend/Tabs/GeneralTab.swift` | 页面布局和交互（只影响通用设置页） |
 | `Frontend/Tabs/VocabularyTab.swift` | 页面布局和交互（只影响词汇页） |
 | `Frontend/Tabs/HistoryTab.swift` | 页面布局和交互（只影响历史页） |
@@ -99,7 +100,7 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 ### 修改守则
 
 1. **改共享组件前**：先 grep 所有消费方，确认修改不会破坏它们
-2. **改 VoiceService 内部结构前**：检查 MeetingService 对 `keyboardListenerRef` 的直接访问（ASR engine 已不再共享）
+2. **改 VoiceService 内部结构前**：跨服务只剩 `setMeetingActive(_:)` 协议方法一条通道（keyboardListenerRef 穿透已消除，ASR engine 已不再共享）
 3. **改 RecordingOverlayPanel 的 show/hide 逻辑前**：注意动画 completionHandler 的异步竞态（见已知问题）
 4. **改 Protocol 接口**：前后端必须同步更新，编译验证
 5. **改 Types/枚举**：全局搜索所有 switch/case，确认无遗漏
@@ -196,11 +197,19 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 「好了→我的ext」反复复活的根因 = 路径 2 绕过 learn() 的黑名单闸。已修（2026-06-10）：脚本端 `is_replacement_candidate` 加 `CJK_NON_LEARNABLE` 黑名单 + 修 `isalnum()` 误把汉字当字母数字（限定 ASCII，恢复"拒中文→中文规则"原意）；app 端 `evictNonLearnableRules()` 启动清扫兜底。
 **回归红线**：① 黑名单闸必须在 `learn()` 的 REVERT 分支**之后**，否则 `to` 是常用词的已学规则永远撤不掉；② Swift 与 Python 两份黑名单需手动同步；③ learning.log 里若再现 22:00 MIGRATE 行带常用词规则 = 复活回路回归。坏规则数据 + 清理见 memory。
 
-### P1（未修）：MeetingService 穿透访问 VoiceService 内部
-`voiceService?.keyboardListenerRef?.isMeetingActive` 绕过 Protocol 层。**已用锁保护 `isMeetingActive` getter/setter**，但架构层面仍破坏了前后端解耦。后续可在 VoiceServiceProtocol 中添加 `func setMeetingActive(_:)`。（`asrEngineRef` 穿透已随会议独立模型一并移除。）
+### ✅ 已修：闲置时被系统强杀（"app 自己关了、要手动重开"）
+**症状**：电脑闲置时进程消失，**无 .ips 崩溃报告**、内存健康、彻底退出（不自重启），下次启动 `[Lifecycle]` 记 `ABNORMALLY`。
+**根因**：AppKit 默认给 Cocoa app 开 **Sudden Termination**，且代码从未持有任何 activity 断言 → 系统空闲回收时把它当"可回收后台进程"直接 SIGKILL，跳过 `applicationWillTerminate`（所以 clean-exit 面包屑没写 → 判异常）。对常驻菜单栏、要随时响应全局按键的工具是致命的。
+**修复（2026-06-22）**：`AppDelegate.applicationDidFinishLaunching` 里 `ProcessInfo.disableSuddenTermination()` + `beginActivity([.background, .suddenTerminationDisabled, .automaticTerminationDisabled])`，token 存 `residentActivityToken` 强引用挂整个进程生命周期。
+**回归红线**：① `residentActivityToken` 必须是 AppDelegate 的长期属性，删了 / 改成局部变量 → 断言立即释放，空闲强杀复活；② 验证看 `grep -c ABNORMALLY /tmp/vb_selflearn_debug.log` 闲置一两天不再涨。
+**注**：确切 kill 信号需 `log show` 读统一日志确认，本次修复基于配置层强推断（签名有效、内存健康、非 OOM、非 relaunchApp 自重启均已排除）。
 
-### P2（未修）：GeneralTab / VoiceSettingsSection 过大
-目标：每个 Tab 文件控制在 250 行以内。
+### ✅ 已修（2026-07-03 重构）：P1 穿透 + P2 胖文件 + 上帝对象 + 浮窗依赖反转
+- P1：VoiceServiceProtocol 加 `setMeetingActive(_:)`，MeetingService 5 处穿透全部改走协议
+- P2：VoiceSettingsSection 1109→7 文件、HistoryTab 848→7 文件，全部 ≤250 行
+- 上帝对象：VoiceService 2234→facade 1021 + 4 协作者；MeetingService 1368→facade 489 + 4 协作者（见"服务内部结构"）
+- 依赖反转：后端 23 处 `RecordingOverlayPanel.shared` 直调改走 `Shared/OverlayPresenting.swift` 协议注入
+全程纯结构重组、零行为变更；三轮独立验收（构建绿 + 高危块逐行 diff 等价 + 红线 grep 全过）。
 
 ## 注意事项
 
