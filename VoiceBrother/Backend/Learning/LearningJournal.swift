@@ -10,6 +10,15 @@ struct DayStat: Codable, Identifiable {
     var id: String { date }
 }
 
+/// Cumulative hit ledger entry for one rule / hotword: how many transcriptions
+/// it appeared in, and when. Without this, the daily totals can't distinguish
+/// a workhorse rule from a dead one.
+struct HitStat: Codable {
+    var hits: Int
+    var first: String   // yyyy-MM-dd
+    var last: String
+}
+
 /// On-disk record-keeping for the correction-learning subsystem.
 ///
 /// Everything lives under `~/Library/Application Support/VoiceBrother/learning/`,
@@ -17,7 +26,12 @@ struct DayStat: Codable, Identifiable {
 ///   • `learned_rules.json` — rules promoted from user corrections
 ///   • `corrections.json`   — raw (original→corrected) captures, newest first, capped
 ///   • `stats.json`         — per-day aggregates, the effectiveness ledger
-///   • `learning.log`       — human-readable event stream, size-capped
+///   • `rule_hits.json`     — per-rule cumulative hit counts (`from` → HitStat)
+///   • `hotword_hits.json`  — per-hotword cumulative hit counts (word → HitStat);
+///                            read by extensions/dynamic-hotwords for its nightly
+///                            zero-hit report
+///   • `learning.log`       — human-readable event stream, size-capped (one
+///                            archived generation kept as learning.log.1)
 ///
 /// All disk I/O runs on one private serial queue and every operation is
 /// best-effort (`try?`), so a failure here can never propagate into the
@@ -29,6 +43,9 @@ final class LearningJournal {
     private let rulesURL: URL
     private let correctionsURL: URL
     private let statsURL: URL
+    private let ruleHitsURL: URL
+    private let hotwordHitsURL: URL
+    private let snapperHitsURL: URL
     private let logURL: URL
     private let logMaxSize: UInt64 = 512_000  // 0.5 MB, then rotated
 
@@ -43,6 +60,9 @@ final class LearningJournal {
         self.rulesURL = base.appendingPathComponent("learned_rules.json")
         self.correctionsURL = base.appendingPathComponent("corrections.json")
         self.statsURL = base.appendingPathComponent("stats.json")
+        self.ruleHitsURL = base.appendingPathComponent("rule_hits.json")
+        self.hotwordHitsURL = base.appendingPathComponent("hotword_hits.json")
+        self.snapperHitsURL = base.appendingPathComponent("snapper_hits.json")
         self.logURL = base.appendingPathComponent("learning.log")
 
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
@@ -128,6 +148,35 @@ final class LearningJournal {
         queue.sync { dayStats.values.sorted { $0.date > $1.date } }
     }
 
+    // MARK: - Per-item hit ledgers
+
+    /// Increment the cumulative hit counter for each key. Backs the three
+    /// attribution ledgers (rule_hits.json / hotword_hits.json / snapper_hits.json).
+    private func bumpHits(at url: URL, keys: [String]) {
+        guard !keys.isEmpty else { return }
+        queue.async { [self] in
+            var stats: [String: HitStat] = [:]
+            if let data = try? Data(contentsOf: url) {
+                stats = (try? JSONDecoder().decode([String: HitStat].self, from: data)) ?? [:]
+            }
+            let today = Self.dayKey(Date())
+            for key in keys {
+                var stat = stats[key] ?? HitStat(hits: 0, first: today, last: today)
+                stat.hits += 1
+                stat.last = today
+                stats[key] = stat
+            }
+            if let data = try? JSONEncoder().encode(stats) {
+                try? data.write(to: url, options: .atomic)
+            }
+        }
+    }
+
+    func bumpRuleHits(_ froms: [String]) { bumpHits(at: ruleHitsURL, keys: froms) }
+    func bumpHotwordHits(_ words: [String]) { bumpHits(at: hotwordHitsURL, keys: words) }
+    /// Keyed by the official spelling the snapper restored (`GLM`, `simulink`, …).
+    func bumpSnapperHits(_ spellings: [String]) { bumpHits(at: snapperHitsURL, keys: spellings) }
+
     // MARK: - Human-readable log
 
     func log(_ message: String) {
@@ -136,10 +185,13 @@ final class LearningJournal {
             guard let data = line.data(using: .utf8) else { return }
             let fm = FileManager.default
 
-            // Rotate when the log outgrows its cap.
+            // Rotate when the log outgrows its cap — keep one archived
+            // generation (learning.log.1) instead of deleting outright.
             if let attrs = try? fm.attributesOfItem(atPath: logURL.path),
                let size = attrs[.size] as? UInt64, size > logMaxSize {
-                try? fm.removeItem(at: logURL)
+                let archiveURL = logURL.appendingPathExtension("1")
+                try? fm.removeItem(at: archiveURL)
+                try? fm.moveItem(at: logURL, to: archiveURL)
             }
 
             if let handle = try? FileHandle(forWritingTo: logURL) {

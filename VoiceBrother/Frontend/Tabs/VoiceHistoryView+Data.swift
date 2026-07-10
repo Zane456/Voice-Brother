@@ -23,16 +23,16 @@ extension VoiceHistoryView {
             )
             await historyStore.insert(updated)
 
-            if let raw = record.rawText, !raw.isEmpty {
-                let result = CorrectionLearningEngine.shared.learn(
-                    originalText: raw, correctedText: newText
-                )
-                if !result.message.isEmpty {
-                    learnToast = result.message
-                    let shown = result.message
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
-                        if learnToast == shown { learnToast = nil }
-                    }
+            // Pre-migration records (rawText == nil) still go to the engine —
+            // it logs the skip, so the journal has an entry for every attempt.
+            let result = CorrectionLearningEngine.shared.learn(
+                originalText: record.rawText ?? "", correctedText: newText
+            )
+            if !result.message.isEmpty {
+                learnToast = result.message
+                let shown = result.message
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
+                    if learnToast == shown { learnToast = nil }
                 }
             }
             await loadRecords()

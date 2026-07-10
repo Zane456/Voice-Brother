@@ -121,6 +121,43 @@ final class CorrectionLearningEngine {
         journal.log("MIGRATE 从手动规则迁出 \(orphans.count) 条孤儿 learned 规则（实际并入 \(moved) 条，去重后共 \(activeRules.count) 条）")
     }
 
+    /// 全部官方拼写：热词 ∪ 手动规则的 `to` ∪ 已学规则的 `to`。
+    /// `HotwordSnapper` 拿它当吸附目标——要把 `G L M` 还原成 `GLM`，
+    /// 目标词必须在场，不管是谁引入的。
+    func officialSpellings() -> Set<String> {
+        var set = Set(activeRules.map { $0.to })
+        set.formUnion(externalTargets())
+        set.remove("")
+        return set
+    }
+
+    /// `PhoneticGate` ch3 的准入白名单：热词 ∪ 手动规则的 `to`。**不含已学规则的 `to`**。
+    ///
+    /// 已学规则的 `to` 必须排除，否则 ch3 退化成「这条规则的目标词在词表里，
+    /// 因为这条规则在」——每条 ASCII 目标的规则都自我批准。实测：`好了 → 我的ext`
+    /// 在 `evictNonLearnableRules()` 里走到 ch3，`targets.contains("我的ext")` 为真
+    /// （它是自己的 `to`），`isMostlyASCIIAlnum` 为真（3/5 ≥ 0.5）→ 发音闸放行，
+    /// 清扫失效。白名单只认**外部**来源，规则不能自证。
+    ///
+    /// 注意不能改写成 `officialSpellings().subtracting([rule.to])`：`cloud → Claude`
+    /// 的 `Claude` 同时由热词表提供，按字符串抹掉会把这条合法规则误杀。
+    /// 排除的是「已学规则这一来源」，不是某个字符串。
+    func admissionWhitelist() -> Set<String> {
+        var set = externalTargets()
+        set.remove("")
+        return set
+    }
+
+    /// 外部来源的目标词：热词 ∪ **手动**规则的 `to`。
+    /// 排掉 `.learned` 是为了防夜间脚本注入、尚未被 `migrateOrphanedLearnedRules`
+    /// 搬走的规则混进白名单——那同样是自证。
+    private func externalTargets() -> Set<String> {
+        guard let configManager else { return [] }
+        var set = Set(configManager.hotwords)
+        set.formUnion(configManager.replacements.filter { $0.source != .learned }.map { $0.to })
+        return set
+    }
+
     /// Sweep resident learned rules whose `from` is a common spoken word.
     /// `learn()` refuses to CREATE such rules, but that gate only covers the
     /// in-app path — the dynamic-hotwords launchd script writes learned rules
@@ -128,17 +165,24 @@ final class CorrectionLearningEngine {
     /// imports them here unchecked. That bypass is how "好了 → 我的ext" kept
     /// resurrecting nightly after every cleanup. Runs each launch; no-op when
     /// nothing matches.
+    ///
+    /// 同时用 `PhoneticGate` 兜底清扫发音不相近的规则。Python 侧的
+    /// `phonetic_gate()` 用 pypinyin 取多音字读音交集，比这里宽松（两端对
+    /// 「朴」的读音判断就不一致：pypinyin 给 piao，CFStringTransform 给 pu）。
+    /// 宽→严的方向是安全的：脚本多捞，这里终审。
     private func evictNonLearnableRules() {
+        let targets = admissionWhitelist()
         let bad = activeRules.filter {
             Self.nonLearnableTerms.contains(normalizedTerm($0.from))
                 || isITNNumberRule(from: normalizedTerm($0.from), to: normalizedTerm($0.to))
+                || !PhoneticGate.allows($0.from, $0.to, knownTargets: targets)
         }
         guard !bad.isEmpty else { return }
         let badIDs = Set(bad.map { $0.id })
         activeRules.removeAll { badIDs.contains($0.id) }
         journal.persistRules(activeRules)
         for rule in bad {
-            journal.log("EVICT   清除规则 \"\(rule.from)\" → \"\(rule.to)\"（黑名单/数字ITN 兜底，外部注入）")
+            journal.log("EVICT   清除规则 \"\(rule.from)\" → \"\(rule.to)\"（黑名单/数字ITN/发音闸 兜底，外部注入）")
         }
     }
 
@@ -216,6 +260,17 @@ final class CorrectionLearningEngine {
                                message: "数字转换交给内置规则处理，已跳过")
         }
 
+        // Phonetic admission gate — 豆包 `AsrUserCorrectDict::Add` 的对应物。
+        // 一次编辑会被提升成 GLOBAL 替换规则，以后每句都跑。改写内容
+        // （内容→论文）和纠听错字（质朴→智谱）在字符层面无法区分，只有发音能。
+        // MUST 在 REVERT 检测之后：反向编辑撤销旧规则时两侧本就不同音，
+        // 提前拦截会让已学的坏规则永远撤不掉。
+        if !PhoneticGate.allows(pair.from, pair.to, knownTargets: admissionWhitelist()) {
+            journal.log("SKIP    发音不相近 \"\(pair.from)\" → \"\(pair.to)\"，不自动学（PhoneticGate 拒绝）")
+            return LearnResult(learned: false, from: pair.from, to: pair.to,
+                               message: "「\(pair.from)」与「\(pair.to)」发音差异过大，已跳过")
+        }
+
         // Refuse pairs that overlap a manual rule's `from` or `to`. If a
         // learned rule's `from` appears anywhere in a manual rule's input or
         // output (or vice versa), a single transcription could trip both rules
@@ -278,12 +333,39 @@ final class CorrectionLearningEngine {
 
     /// Tally how many learned rules would fire on a fresh ASR result, for the
     /// effectiveness ledger. Call with the RAW transcription text (pre-processing).
+    /// Logs WHICH rules fired and bumps their per-rule counters — aggregate
+    /// counts alone can't tell a workhorse rule from a dead one (the 637 hits
+    /// that turned out to be all ITN junk rules got past exactly that gap).
     func noteTranscription(rawText: String) {
         guard !activeRules.isEmpty, !rawText.isEmpty else { return }
-        let hits = activeRules.reduce(0) { $0 + (rawText.contains($1.from) ? 1 : 0) }
-        guard hits > 0 else { return }
-        journal.bump(hitsDelta: hits)
-        journal.log("HIT     本次转写命中 \(hits) 条已学规则")
+        let fired = activeRules.filter { rawText.contains($0.from) }
+        guard !fired.isEmpty else { return }
+        journal.bump(hitsDelta: fired.count)
+        journal.bumpRuleHits(fired.map { $0.from })
+        let detail = fired.map { "\"\($0.from)→\($0.to)\"" }.joined(separator: " ")
+        journal.log("HIT     本次转写命中 \(fired.count) 条已学规则: \(detail)")
+    }
+
+    /// Tally which configured hotwords actually appear in a fresh ASR result.
+    /// The nightly miner picks hotwords by frequency gap, with no evidence of
+    /// whether priming pays off — this ledger supplies that evidence, so
+    /// zero-hit words can be spotted (nightly report) and pruned. ASCII
+    /// case-insensitive. No log line: most transcripts hit several words and
+    /// per-line logging would drown learning.log.
+    func noteHotwords(rawText: String, hotwords: [String]) {
+        guard !rawText.isEmpty, !hotwords.isEmpty else { return }
+        let lower = rawText.lowercased()
+        let hit = hotwords.filter { !$0.isEmpty && lower.contains($0.lowercased()) }
+        guard !hit.isEmpty else { return }
+        journal.bumpHotwordHits(hit)
+    }
+
+    /// Tally which official spellings `HotwordSnapper` actually restored. Lets the
+    /// nightly report tell a snapper that earns its keep from one that never fires.
+    func noteSnapperHits(_ spellings: [String]) {
+        guard !spellings.isEmpty else { return }
+        journal.bumpSnapperHits(spellings)
+        journal.log("SNAP    热词吸附命中: \(spellings.joined(separator: " "))")
     }
 
     /// Drop a learned rule (e.g. a bad capture the user wants undone).

@@ -50,6 +50,11 @@ final class AppConfig: ObservableObject {
     @Published var trailingPunctuation: Bool {
         didSet { scheduleSave() }
     }
+    /// 热词吸附。把识别结果里只差空格/标点/中文数字写法的片段还原成热词官方拼写
+    /// （`G L M` → `GLM`）。只在规范化后精确相等时替换，不做发音近似匹配。
+    @Published var hotwordSnapping: Bool {
+        didSet { scheduleSave() }
+    }
     /// Retention window (months) for voice transcription history.
     @Published var historyRetentionMonths: Int {
         didSet { scheduleSave() }
@@ -172,6 +177,7 @@ final class AppConfig: ObservableObject {
     static let defaultPreserveClipboard = true
     static let defaultTypewriterMode = false
     static let defaultTrailingPunctuation = true
+    static let defaultHotwordSnapping = true
     static let defaultHistoryRetentionMonths = 2
     static let defaultMeetingRetentionMonths = 2
     static let defaultMeetingSavePath: String = {
@@ -230,6 +236,7 @@ final class AppConfig: ObservableObject {
         self.preserveClipboard = Self.load("preserveClipboard", default: Self.defaultPreserveClipboard)
         self.typewriterMode = Self.load("typewriterMode", default: Self.defaultTypewriterMode)
         self.trailingPunctuation = Self.load("trailingPunctuation", default: Self.defaultTrailingPunctuation)
+        self.hotwordSnapping = Self.load("hotwordSnapping", default: Self.defaultHotwordSnapping)
         self.historyRetentionMonths = Self.load("historyRetentionMonths", default: Self.defaultHistoryRetentionMonths)
         self.meetingRetentionMonths = Self.load("meetingRetentionMonths", default: Self.defaultMeetingRetentionMonths)
         self.onboardingDone = Self.load("onboardingDone", default: Self.defaultOnboardingDone)
@@ -335,6 +342,7 @@ final class AppConfig: ObservableObject {
         defaults.set(preserveClipboard, forKey: "preserveClipboard")
         defaults.set(typewriterMode, forKey: "typewriterMode")
         defaults.set(trailingPunctuation, forKey: "trailingPunctuation")
+        defaults.set(hotwordSnapping, forKey: "hotwordSnapping")
         defaults.set(historyRetentionMonths, forKey: "historyRetentionMonths")
         defaults.set(meetingRetentionMonths, forKey: "meetingRetentionMonths")
         defaults.set(onboardingDone, forKey: "onboardingDone")

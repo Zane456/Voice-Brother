@@ -49,18 +49,7 @@ final class TranscriptionPipeline {
             return
         }
 
-        // Learned correction rules (自学习纠错) are merged AFTER the user's
-        // manual rules. If the learning subsystem is empty/disabled this is
-        // just the manual list — behaviour is unchanged.
-        CorrectionLearningEngine.shared.noteTranscription(rawText: text)
-        ASRLogger.shared.event(.processStarted, sessionID: session)
-        var processedText = TextProcessor.process(
-            text: text,
-            removeFillers: configManager.removeFillers,
-            rules: configManager.replacements + CorrectionLearningEngine.shared.activeRules
-        )
-        ASRLogger.shared.event(.processCompleted, sessionID: session,
-                               props: ["len": processedText.count])
+        var processedText = processTranscript(text, session: session)
 
         guard !processedText.isEmpty else {
             voice?.state = .ready
@@ -300,18 +289,7 @@ final class TranscriptionPipeline {
                                        "empty": text.isEmpty])
         debugLog("ASR raw result: \"\(text)\" (empty=\(text.isEmpty)) — \(MLXMemoryGovernor.snapshotDescription())")
 
-        // Process text (Layer 1 filler removal + Layer 2 ITN + replacements).
-        // Learned correction rules (自学习纠错) are merged after the user's
-        // manual rules; an empty/failed learning store leaves behaviour unchanged.
-        CorrectionLearningEngine.shared.noteTranscription(rawText: text)
-        ASRLogger.shared.event(.processStarted, sessionID: session)
-        var processedText = TextProcessor.process(
-            text: text,
-            removeFillers: configManager.removeFillers,
-            rules: configManager.replacements + CorrectionLearningEngine.shared.activeRules
-        )
-        ASRLogger.shared.event(.processCompleted, sessionID: session,
-                               props: ["len": processedText.count])
+        var processedText = processTranscript(text, session: session)
         debugLog("After TextProcessor: \"\(processedText)\"")
 
         // Defense-in-depth: the model sometimes appends the entire hotword
@@ -398,6 +376,48 @@ final class TranscriptionPipeline {
         Task { await historyStore.insert(record) }
         // Voice input just completed — History tab opens on this segment next.
         configManager.lastHistoryKind = "voice"
+    }
+
+    // MARK: - 转写后处理
+
+    /// ASR 原文 → 可注入文本。云端和本地两条路径共用，**这是唯一的后处理入口**。
+    ///
+    /// 顺序是有约束的：语气词过滤 + ITN + 替换规则（都在 `TextProcessor.process` 里）
+    /// 跑完之后，才轮到热词吸附。见 `applyHotwordSnapping` 的注释。把顺序收在
+    /// 一个函数里，加第三条 ASR 路径时不会漏掉吸附器。
+    private func processTranscript(_ text: String, session: UUID?) -> String {
+        // Learned correction rules (自学习纠错) are merged AFTER the user's
+        // manual rules. If the learning subsystem is empty/disabled this is
+        // just the manual list — behaviour is unchanged.
+        CorrectionLearningEngine.shared.noteTranscription(rawText: text)
+        CorrectionLearningEngine.shared.noteHotwords(rawText: text, hotwords: configManager.hotwords)
+        ASRLogger.shared.event(.processStarted, sessionID: session)
+        var processed = TextProcessor.process(
+            text: text,
+            removeFillers: configManager.removeFillers,
+            rules: configManager.replacements + CorrectionLearningEngine.shared.activeRules
+        )
+        applyHotwordSnapping(&processed)
+        ASRLogger.shared.event(.processCompleted, sessionID: session,
+                               props: ["len": processed.count])
+        return processed
+    }
+
+    /// 把只差空格/标点/中文数字写法的片段还原成热词官方拼写（`G L M` → `GLM`）。
+    ///
+    /// ⚠️ 必须在 `TextProcessor.process` 之后调用，也就是**替换规则跑完之后**。
+    /// 若抢在 `applyReplacements` 前面，`code x` 会先被吸附成热词 `Codex`，
+    /// 用户显式配置的手动规则 `code x → CodeX` 就再也匹配不到——吸附器
+    /// 悄悄推翻了用户的规则。放在后面 + snapper 内部的 skip-set，用户规则永远优先。
+    private func applyHotwordSnapping(_ text: inout String) {
+        guard configManager.hotwordSnapping else { return }
+        let snapped = HotwordSnapper(
+            targets: Array(CorrectionLearningEngine.shared.officialSpellings())
+        ).snap(text)
+        guard snapped.text != text else { return }
+        debugLog("HotwordSnapper: \"\(text)\" → \"\(snapped.text)\"")
+        text = snapped.text
+        CorrectionLearningEngine.shared.noteSnapperHits(snapped.hits)
     }
 
     // MARK: - Hotword Context

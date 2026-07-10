@@ -65,6 +65,11 @@ final class ConfigManager: ObservableObject, ConfigManagerProtocol {
         get { appConfig.trailingPunctuation }
         set { appConfig.trailingPunctuation = newValue }
     }
+
+    var hotwordSnapping: Bool {
+        get { appConfig.hotwordSnapping }
+        set { appConfig.hotwordSnapping = newValue }
+    }
     var historyRetentionMonths: Int {
         get { appConfig.historyRetentionMonths }
         set { appConfig.historyRetentionMonths = newValue }

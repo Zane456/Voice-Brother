@@ -211,6 +211,41 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 - 依赖反转：后端 23 处 `RecordingOverlayPanel.shared` 直调改走 `Shared/OverlayPresenting.swift` 协议注入
 全程纯结构重组、零行为变更；三轮独立验收（构建绿 + 高危块逐行 diff 等价 + 红线 grep 全过）。
 
+### ✅ 已修（2026-07-09）：学习管道空转 —— 配对层是坏的 + 学不到东西
+
+**实证的两个病**：
+1. 6–7 月 11739 次转写，用户手动纠错 **0 次**，`learned_rules.json = []`。用户对大模型说话，错字被 LLM 意会 → 没动机去历史页手动改 → 学习引擎输入为空。
+2. `update_hotwords.py` 的旧配对（时间窗 ±90s + Levenshtein 挑最近）**全是乱配**：590 对里 `dist==0` 有 **0** 对；一条 user msg 被 5 条 ASR 记录抢配。北极星 `mean_edit_rate≈0.54` 测的是乱配率，不是编辑率。已 `os.rename` 归档为 `edit_distance_daily.json.v1-invalid`，**不要当历史数据读**。
+
+**三段修复**（引擎无关，全部在 ASR 输出之后）：
+
+| 层 | 文件 | 作用 |
+|---|---|---|
+| 运行时吸附 | `Backend/Voice/HotwordSnapper.swift` | `G L M`→`GLM`、`simu link`→`simulink`。normalize **完全相等**才吸附 → 零误伤 |
+| 学习闸门 | `Backend/Voice/PhoneticGate.swift` | 发音不相近就不学。独立拦住 `好了→我的ext` 类事故，不再只靠停用词表 |
+| 信号源 | `extensions/cc-prompt-log/` hook + `update_hotwords.py` 的 `mine_anchored_pairs()` | hook 记下每次提交的 prompt 原文 → 锚定对齐 ASR 注入文本 → diff 出真错字；锚定失败的送 GLM 复核 |
+
+**两份词表，不是一份**（`CorrectionLearningEngine`）：
+- `officialSpellings()` = 热词 ∪ 手动规则 `to` ∪ **已学规则 `to`** —— 吸附器的目标词，谁引入的都算
+- `admissionWhitelist()` = 热词 ∪ 手动规则 `to` —— PhoneticGate ch3 的白名单，**只认外部来源**
+
+**回归红线**：
+0. `admissionWhitelist()` 绝不能含已学规则的 `to`。否则 ch3 退化成「这条规则的目标词在词表里，因为这条规则在」，每条 ASCII 目标的坏规则都**自我批准**。实测 `好了 → 我的ext` 走到 ch3：`contains("我的ext")` 真（它是自己的 `to`）+ `isMostlyASCIIAlnum` 真（3/5）→ 放行，`evictNonLearnableRules()` 清扫失效。也**不能**改写成 `officialSpellings().subtracting([rule.to])`：`cloud → Claude` 的 `Claude` 同时由热词表提供，按字符串抹掉会误杀这条合法规则。排除的是「已学规则这一来源」，不是某个字符串。Python 侧 `known_targets()` 是同一份语义的镜像。
+1. `PhoneticNormalize.key()` 是 **唯一** normalize 实现，snapper 和 gate 共用。别在任一侧再写一份。
+2. `PhoneticGate.swift` 是**权威**；`update_hotwords.py` 的 `phonetic_gate()` 是**故意放宽**的镜像（pypinyin 逐字 `heteronym=True` 读音集合求交）。因为 pypinyin 读「朴」为 `piao`、Swift `CFStringTransform` 读为 `pu` → 同一对 `质朴→智谱` 两侧判决相反。**宽→严是安全方向**：Python 多捞，Swift 终审，`evictNonLearnableRules()` 每次启动清扫。反过来会静默漏学。
+3. `PhoneticGate` 的 ch2（纯 CJK）必须**就地 return**，不许下落到 ch3。
+4. 吸附器必须跑在 `applyReplacements` **之后**（`TextProcessor.process()` 返回后）。否则 `code x` 先被吸附成热词 `Codex`，用户显式规则 `code x → CodeX` 永远匹配不到。这条顺序收在 `TranscriptionPipeline.processTranscript()` 一个函数里——云端 / 本地两条 ASR 路径都调它，**不要再在别处重写这段后处理**。
+5. **连续单字符 token 是原子段**，不许从中间截。生产语料实测：不加这条会把 `A P I key` 吸成 `A PI key`、`K I C A D` 吸成 `K IC A D`（短热词 `PI`/`IC`/`DC` 从长串中间命中）。
+6. **只差大小写的不吸附**。热词表里有 `Wait`/`Actually`/`skill`/`token` 这类普通英文词，否则 `please wait`→`please Wait`。
+7. `cc_prompt_log.py` 必须**完全静默**（UserPromptSubmit 的 stdout 会被注入模型上下文）且时间戳必须是 **UTC + `Z`**（`time.gmtime()`）。history.db / DebugLog / learning.log 全是 UTC+Z（实测 11067/11067 行）。写本地时间 → 锚定整体错开 9 小时、一条配不上、**不报任何错**。
+8. GLM 复核喂的是 `raw_text`（ASR 原文）不是注入文本，否则挑出的是 polish 产物，随后被 `raw_text` 回查全部打掉，白花钱。缓存 `state/glm_cache.json` 按 `sha1(raw_text)` 键，删了会对同一批失败样本重复计费。
+9. 机械候选与 GLM 候选**同一条闸门链、零豁免**（`passes_gate_chain`），频次闸 ≥2 在合并后的 `rule_counts` 上统一施加 → GLM 单次命中无法自我晋升。
+10. **所有时间窗口一律 `datetime.utcnow()`**。history.db 的 `created_at`、Claude jsonl 的 `timestamp`、hook 的 `ts` 全是带 Z 的 UTC。拿 `datetime.now()` 去比会把窗口前端砍掉 9 小时（JST），静默丢数据。DB 行只从 `_load_history_rows()` 一处进来。
+11. 锚定循环只有一份：`anchor_segments()`。`calibrate_anchor.py` 必须消费它而不是复制它——校准脚本是给生产算法打分的，各写一份就会给另一个算法打分。
+
+**新产物**：`~/Library/Application Support/VoiceBrother/learning/` 下 `prompt_submissions.jsonl`（hook 写，0600，保留 35 天）、`snapper_hits.json`（吸附命中记账）。
+**校准**：`extensions/dynamic-hotwords/calibrate_anchor.py`（只读）。判死判活看 `dist0 占比`——旧管道 0%，新管道 96.1%。
+
 ## 注意事项
 
 - 会议纪要的转写**只执行语气词过滤**，不执行替换规则，不传热词

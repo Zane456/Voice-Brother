@@ -47,6 +47,12 @@ struct GeneralSettingsSection: View {
 
                     Divider().padding(.horizontal, 16)
 
+                    toggleRow(title: "热词吸附",
+                              subtitle: "把识别结果里只差空格或标点的热词还原成标准写法（G L M → GLM）；仅在完全一致时替换，不会误改同音词",
+                              isOn: $configManager.hotwordSnapping)
+
+                    Divider().padding(.horizontal, 16)
+
                     toggleRow(title: "渐进上屏",
                               subtitle: "目标 App 内按打字机节奏逐字键入（浮窗只显示波形）；关闭则现有整段一次性粘贴",
                               isOn: $configManager.typewriterMode)
