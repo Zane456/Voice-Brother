@@ -12,6 +12,12 @@ struct VoiceSettingsSection: View {
     // Cloud switch confirmation (only ASR has local↔cloud toggle now)
     @State var showASRCloudConfirm = false
 
+    /// Whether the Apple engine's model asset for the selected 识别语言 is on the
+    /// machine. nil = unknown / not applicable (pre-macOS 26). Refreshed by a
+    /// `.task(id:)` on the language picker, because a missing asset makes the
+    /// first recording silently fall back to the legacy engine.
+    @State var appleLanguageAssetReady: Bool? = nil
+
     // Prompt preset save dialog
     @State var showSavePolishPresetSheet = false
     @State var newPolishPresetName = ""

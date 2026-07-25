@@ -149,6 +149,11 @@ extension VoiceSettingsSection {
                             .foregroundColor(theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
 
+                        Text("此档不接受热词偏置。词汇表和已学规则只能在转写完成后做文本纠正，听错得太远的专有名词纠不回来（实测 Simulink 会听成 Simuling、KiCad 听成 KeyCat）。专有名词多的场合用 Qwen 档。")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
                         HStack(spacing: 6) {
                             Image(systemName: "globe").font(.system(size: 11))
                             Text("识别语言").font(.system(size: 12, weight: .medium))
@@ -163,10 +168,30 @@ extension VoiceSettingsSection {
                         .labelsHidden()
                         .pickerStyle(.segmented)
 
-                        Text("Apple 引擎无法自动检测语言，请先选定语言。需在「系统设置 → 键盘 → 听写」中启用对应语言。")
+                        if let ready = appleLanguageAssetReady {
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: ready ? "checkmark.circle.fill" : "arrow.down.circle")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(ready ? theme.statusOK : theme.textSecondary)
+                                Text(ready
+                                     ? "该语言的识别模型已在本机，识别走新引擎。"
+                                     : "该语言的识别模型还没下载。首次识别会在后台自动下载（数百 MB），这期间先用旧引擎出字，装好后自动切过去。")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(ready ? theme.statusOK : theme.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+
+                        Text("Apple 引擎无法自动检测语言，请先选定语言。macOS 26 起每种语言是一个独立模型；更早的系统需在「系统设置 → 键盘 → 听写」中启用对应语言。")
                             .font(.system(size: 12))
                             .foregroundColor(theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    // Probe on appear and on every language switch — a locale the
+                    // user just picked may well be the one that isn't installed.
+                    .task(id: configManager.voiceInputLanguage) {
+                        appleLanguageAssetReady = await AppleASREngine.modernAssetInstalled(
+                            forLanguage: configManager.voiceInputLanguage.asrLanguageHint)
                     }
                 }
             }

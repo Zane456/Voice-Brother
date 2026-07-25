@@ -142,6 +142,7 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
    ```
    **每次修改代码后都必须执行这三步**，不要只构建不重启，也不要让用户手动去操作。
    构建末尾偶尔会报 `accessing build database ... disk I/O error`（LaunchServices 注册步骤的小故障），**不影响产物**，已签名好的 .app 会照常生成，忽略即可。
+   ⚠️ 它会连带打出 `** BUILD FAILED **` 且 **exit code 65** —— 看着像致命错误，**不是**。判据只有一个：`Build/Products/Release/VoiceBrother.app/Contents/MacOS/VoiceBrother` 在不在（在就是成功，直接 ditto 部署）。别去查磁盘空间 / 沙盒 / TMPDIR / Xcode 组件，全都不是原因（2026-07-25 为此白排查半小时）。真正的构建失败长这样：`error:` 行里有源文件路径和行号。另一种真错是 `database is locked` —— 那是**另一个会话在同目录并发构建**，等它跑完即可，别 kill。
 
    **为什么必须 Release 而不是 Debug**：Debug 构建的 entitlements 自动注入 `get-task-allow=true`（允许 lldb 附加），macOS TCC 把带这个 flag 的 binary 视为"可被任意篡改"，**不持久缓存敏感权限**（辅助功能 / 输入监控），每次重建都会要求重新授权 → 弹密码。Release 构建 + `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` 干净 entitlements + 固定 `/Applications` 路径 = TCC 按 designated requirement 长期缓存权限，重建多少次都不弹。
 
@@ -246,9 +247,23 @@ ASR engine 不再共享——会议按 `meetingASRModel` 配置加载自己的 Q
 **新产物**：`~/Library/Application Support/VoiceBrother/learning/` 下 `prompt_submissions.jsonl`（hook 写，0600，保留 35 天）、`snapper_hits.json`（吸附命中记账）。
 **校准**：`extensions/dynamic-hotwords/calibrate_anchor.py`（只读）。判死判活看 `dist0 占比`——旧管道 0%，新管道 96.1%。
 
+### ✅ 已查清（2026-07-25）：Apple 档拿不到热词，以及模型按语言分包
+
+**Apple 档没有 ASR 级热词偏置，这是引擎边界，不是实现漏接。** `AppleASREngine.transcribeModern` 的 `context` 参数确实没往下传，但接上也没用：`AnalysisContext.contextualStrings[.general]` 在 macOS 26.5.1 上实测是 no-op —— 经 `analyzer.setContext(_:)` 在 `analyzeSequence` 前设好短语表，输出与不设时**逐字节相同**（`Simulink`→`Simuling`、`KiCad`→`hetet`(zh-CN) / `KeyCat`(en-US)，给不给热词都一样）。真要定制词汇得用 `SFCustomLanguageModelData`（预编译语言模型）。**别看到这个 API 就接上，先拿 fixture 验。**
+
+**新引擎每种语言是一个独立模型资产**，不是一个模型认所有语言。可用性判据只有 `SpeechTranscriber.installedLocales`——`AssetInventory.status(forModules:)` 对**已装**的 zh-CN 也报 `.supported`（它掺了 locale reservation），拿它当判据会把所有语言误踢去 legacy。资产缺失时 `analyzeSequence` 抛的是**误导性**的 `Audio format is not supported`（同一个 WAV 换已装 locale 就正常）。已修：缺失则后台 `AssetInventory` 下载 + `reserve`，本轮降级 legacy，每 locale 每次启动只发一次请求。
+locale 表用 `zh-CN` 不用 `zh-Hans`：后者在 SFSpeechRecognizer 里会解析成 `zh-CN`（等价），但永远匹配不上 `installedLocales`。
+
+**档位现状 = 用户自选 `apple_speech`，别再自动切。** 2026-07-25 两次把它改成 1.7B，用户两次改回（先 0.6B 再 apple_speech）。他要 Apple 档，尊重；提升效果走替换规则那条路，不是劝他换档。
+
+**但数据上 Qwen 明确更好**（3546 条 0.6B vs 291 条 Apple 实测）：Apple 档 **22%** 的句子有「空格 + 全角标点」格式缺陷（`嗯 ，那你的`）、13% 有中英间怪空格，Qwen 两项分别是 0% 和 3%。Apple 唯一赢的是语气词残留（16% vs 28%），而 `TextProcessor.removeFillers` 本来就在做这事，优势冗余。
+**Apple 档存在补丁修不掉的一类错**：错到常用词上就无解——`Qwen`→`千万` 不能加规则（会毁掉「千万别忘了」），吸附也救不了（key 差太远）。只有 ASR 级热词偏置能防。同一个词还会有多种错法（`KiCad` 实测错成 `KSAD`/`KeyCat`/`hetet` 三种），规则数随使用线性涨且永远滞后。
+**Qwen 的 MLX 路径是唯一吃热词 context 的路径**——speech-swift 的 CoreML/ANE 路径（`CoreMLASRModel`）里 `context` 出现 0 次且只有 0.6B 模型，为 ANE 升级会重演 Apple 档的短板。
+1.7B 无启动代价：`fromPretrained` 0.36s（0.6B 是 0.38s，MLX 按需 mmap），6.0s 音频 1 秒内出字，RSS 1.7 GB，MLX cache 归零。
+
 ## 注意事项
 
 - 会议纪要的转写**只执行语气词过滤**，不执行替换规则，不传热词
-- 替换规则必须存储为**有序数组**，不能用 Swift Dictionary
+- 替换规则必须存储为**有序数组**，不能用 Swift Dictionary。**顺序有语义**：`applyReplacements` 按数组顺序逐条施加，所以只要一条规则的 `from` 是另一条 `from` 的前缀/子串，短的必须排在长的**后面**，否则短的先吃掉文本、长的**静默失效**。实测（2026-07-25）：`cloud → Claude` 排在 `cloud code → Claude Code` 前面，导致后者从来没生效过（`cloud code` 先变 `Claude code`）。新增规则**别只往末尾追加**——追加完要检查是否被已有的短规则遮蔽。判据带边界：纯 ASCII 的 `from` 走 `(?<![0-9A-Za-z])…(?![0-9A-Za-z])`，所以 `cloud` 不会命中 `cloudcode`（后面紧跟字母），但会命中 `cloud code`（后面是空格）。
 - 剪贴板恢复前必须检查 `changeCount` 防止竞态
 - 双 Command 触发会议时，正在进行的语音录音**立即取消**

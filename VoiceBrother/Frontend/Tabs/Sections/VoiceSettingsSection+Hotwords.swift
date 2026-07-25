@@ -3,13 +3,27 @@ import SwiftUI
 extension VoiceSettingsSection {
     // MARK: - Hotwords
 
+    /// The old copy ("传递给识别模型") is only true on the Qwen path. Apple's engine
+    /// takes no hotword bias at all — `AnalysisContext.contextualStrings` is a
+    /// measured no-op on macOS 26.5.1 — so there the list only feeds
+    /// HotwordSnapper's post-transcription pass. Name whichever is actually in
+    /// effect instead of promising biasing the selected engine can't do.
+    var hotwordScopeHint: String {
+        let usingApple = configManager.asrProviderType == "local"
+            && (ASRModel(rawValue: configManager.model)?.isApple ?? false)
+        return usingApple
+            ? "当前 Apple 档不接受热词——这些词只用于转写完成后的文本纠正。换到 Qwen 档才会真正传给识别模型。"
+            : "传递给识别模型，帮助识别专有名词"
+    }
+
     var hotwordsView: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "热词")
 
-            Text("传递给识别模型，帮助识别专有名词")
+            Text(hotwordScopeHint)
                 .font(.system(size: 12))
                 .foregroundColor(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             FlowLayout(spacing: 8) {
                 ForEach(configManager.hotwords, id: \.self) { word in

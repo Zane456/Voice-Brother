@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import Speech
 
 /// Apple SFSpeechRecognizer wrapper conforming to ASREngineProtocol.
@@ -22,11 +23,21 @@ final class AppleASREngine: ASREngineProtocol {
     private let defaultRecognizer: SFSpeechRecognizer
 
     /// Maps MeetingLanguage's `asrLanguageHint` values to BCP-47 locale IDs.
+    /// Use the exact identifiers both Speech APIs publish. "zh-Hans" resolves to
+    /// "zh-CN" inside SFSpeechRecognizer, but it never string-matches
+    /// `SpeechTranscriber.installedLocales` (which lists zh-CN / zh-TW / zh-HK) —
+    /// and that list is how the modern path decides whether its asset is present.
     private static let localeForLanguage: [String: String] = [
-        "Chinese": "zh-Hans",
+        "Chinese": "zh-CN",
         "English": "en-US",
         "Japanese": "ja-JP",
     ]
+
+    /// Guards `assetInstallsStarted`. transcribe() runs on background threads.
+    private static let assetLock = NSLock()
+    /// Locale IDs whose SpeechTranscriber asset download has already been kicked
+    /// off this launch, so a repeated miss doesn't spawn a request per recording.
+    private static var assetInstallsStarted: Set<String> = []
 
     /// Failable init. Returns nil if the device can't run on-device Chinese
     /// recognition at all. Japanese/English recognizers are best-effort — if
@@ -77,34 +88,41 @@ final class AppleASREngine: ASREngineProtocol {
     }
 
     func transcribe(audio: [Float], sampleRate: Int, language: String?, context: String?) -> String {
-        // Each call gets its own temp file. Sharing a single path across calls (which
-        // the previous implementation did) collides with concurrent invocations — the
-        // streaming preview timer could overwrite the WAV mid-recognition or have its
-        // `defer { remove }` delete the file out from under another in-flight task.
-        // UUID per call eliminates the race entirely.
+        // Write WAV once — both the modern (SpeechAnalyzer, macOS 26+) and the
+        // legacy (SFSpeechRecognizer) paths consume the same file. UUID per call
+        // avoids collisions between concurrent invocations (e.g. the streaming
+        // preview timer racing a finalized transcription).
         let tempFileURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("vb_apple_asr_\(UUID().uuidString).wav")
-
         guard writeWAV(samples: audio, sampleRate: sampleRate, to: tempFileURL) else {
             NSLog("[AppleASREngine] Failed to write temporary WAV file at %@", tempFileURL.path)
             return ""
         }
         defer { try? FileManager.default.removeItem(at: tempFileURL) }
 
+        let text: String
+        if #available(macOS 26.0, *) {
+            text = transcribeModern(url: tempFileURL, language: language, context: context, audio: audio, sampleRate: sampleRate)
+        } else {
+            text = transcribeLegacy(url: tempFileURL, language: language, context: context, audio: audio, sampleRate: sampleRate)
+        }
+        return Self.ensureTerminalPunctuation(text, language: language)
+    }
+
+    /// Legacy path: SFSpeechRecognizer (pre-macOS 26). Retained as the fallback
+    /// for older OS and for Apple-Intelligence-less hardware where SpeechTranscriber
+    /// isn't supported. Still honors `context` for contextualStrings hotword bias.
+    private func transcribeLegacy(url: URL, language: String?, context: String?, audio: [Float], sampleRate: Int) -> String {
         // Pick the recognizer for the requested language. nil (auto-detect) or
         // an unmapped language falls back to `defaultRecognizer` — SFSpeechRecognizer
         // can't auto-detect, so a specific 会议语言 must be chosen for ja/en.
         let recognizer = recognizers[language ?? ""] ?? defaultRecognizer
-
-        // If the recognizer flips to unavailable mid-session (asset still downloading,
-        // device went to sleep, etc.) bail out with a logged reason instead of letting
-        // the request hang for the full 30s timeout.
         guard recognizer.isAvailable else {
             NSLog("[AppleASREngine] Recognizer not available — skipping transcribe. Likely cause: on-device language asset missing for the selected 会议语言.")
             return ""
         }
 
-        let request = SFSpeechURLRecognitionRequest(url: tempFileURL)
+        let request = SFSpeechURLRecognitionRequest(url: url)
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = false
         // Punctuation is inserted by the recognizer during recognition itself —
@@ -122,7 +140,6 @@ final class AppleASREngine: ASREngineProtocol {
         // Run recognition with semaphore (blocking — must be called from background thread)
         let semaphore = DispatchSemaphore(value: 0)
         var resultText = ""
-
         var signaled = false
         recognizer.recognitionTask(with: request) { result, error in
             if let error {
@@ -145,8 +162,135 @@ final class AppleASREngine: ASREngineProtocol {
                   audio.count, Double(audio.count) / Double(max(sampleRate, 1)))
             return ""
         }
+        return resultText
+    }
 
-        return Self.ensureTerminalPunctuation(resultText, language: language)
+    /// Modern path: SpeechAnalyzer + SpeechTranscriber (macOS 26+). ~3-4x more
+    /// accurate than SFSpeechRecognizer, built for long-form / distant audio.
+    /// `.transcription` preset transcribes the whole recorded file in one batch
+    /// (accuracy-first), matching Voice Brother's press-talk-release flow.
+    ///
+    /// Caveat: ASR-level hotword biasing is lost on this path, so `context` goes
+    /// unused here and only HotwordSnapper post-processing (downstream in
+    /// TranscriptionPipeline) still fixes terms. `AnalysisContext.contextualStrings`
+    /// *looks* like the replacement for `SFSpeechRecognizer.contextualStrings`, but
+    /// wiring it up is measured to be a no-op on macOS 26.5.1: with the phrase list
+    /// set via `analyzer.setContext(_:)` before `analyzeSequence`, output is
+    /// byte-identical to the no-context run ("Simulink"→"Simuling", "KiCad"→"hetet"
+    /// in zh-CN and →"KeyCat" in en-US, both with and without the hint). Don't
+    /// re-add it expecting biasing — verify against a fixture first. Real custom
+    /// vocabulary here would need `SFCustomLanguageModelData` (a pre-compiled model).
+    /// Falls back to legacy when SpeechTranscriber isn't available on the device.
+    @available(macOS 26.0, *)
+    private func transcribeModern(url: URL, language: String?, context: String?, audio: [Float], sampleRate: Int) -> String {
+        let localeID = Self.localeForLanguage[language ?? ""] ?? "zh-CN"
+        let locale = Locale(identifier: localeID)
+
+        guard SpeechTranscriber.isAvailable else {
+            NSLog("[AppleASREngine] SpeechTranscriber not available — falling back to legacy.")
+            return transcribeLegacy(url: url, language: language, context: context, audio: audio, sampleRate: sampleRate)
+        }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var resultText = ""
+        var capturedError: String?
+        var assetMissing = false
+
+        Task.detached {
+            defer { semaphore.signal() }
+            // A locale whose model asset isn't installed throws a *misleading*
+            // "Audio format is not supported" from analyzeSequence — the very same
+            // WAV transcribes fine under an installed locale. Only zh/ja ship
+            // installed on a Chinese Mac, so without this check every English
+            // recording silently returned "".
+            guard await Self.isAssetInstalled(for: locale) else {
+                assetMissing = true
+                Self.requestAssetInstall(for: locale, localeID: localeID)
+                return
+            }
+            do {
+                let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
+                async let transcript = try transcriber.results
+                    .reduce(into: "") { $0 += String($1.text.characters) }
+                let analyzer = SpeechAnalyzer(modules: [transcriber])
+                // Feed the whole file, then finalize. The finalize call is
+                // mandatory — without it the results AsyncSequence never
+                // terminates and `await transcript` hangs forever.
+                let avFile = try AVAudioFile(forReading: url)
+                _ = try await analyzer.analyzeSequence(from: avFile)
+                try await analyzer.finalizeAndFinishThroughEndOfInput()
+                resultText = try await transcript
+            } catch {
+                capturedError = error.localizedDescription
+            }
+        }
+
+        let timeout = DispatchTime.now() + .seconds(30)
+        if semaphore.wait(timeout: timeout) == .timedOut {
+            NSLog("[AppleASREngine] SpeechAnalyzer timed out after 30s (audio length: %d samples / %.1fs)",
+                  audio.count, Double(audio.count) / Double(max(sampleRate, 1)))
+            return ""
+        }
+        // Asset download runs in the background; serve this turn from the legacy
+        // recognizer rather than handing the user an empty transcript.
+        if assetMissing {
+            NSLog("[AppleASREngine] SpeechTranscriber asset for %@ not installed — using legacy for this turn.", localeID)
+            return transcribeLegacy(url: url, language: language, context: context, audio: audio, sampleRate: sampleRate)
+        }
+        if let capturedError {
+            NSLog("[AppleASREngine] SpeechAnalyzer error: %@", capturedError)
+        }
+        return resultText
+    }
+
+    /// UI-facing readiness probe for the modern engine's per-language model asset.
+    /// Returns nil when the question doesn't apply — macOS < 26, or a device that
+    /// can't run SpeechTranscriber at all. The legacy engine has no per-language
+    /// download of its own; its assets come from System Settings → Keyboard →
+    /// Dictation, which is why the caller shows different copy for nil.
+    static func modernAssetInstalled(forLanguage hint: String) async -> Bool? {
+        guard #available(macOS 26.0, *) else { return nil }
+        guard SpeechTranscriber.isAvailable else { return nil }
+        let localeID = localeForLanguage[hint] ?? "zh-CN"
+        return await isAssetInstalled(for: Locale(identifier: localeID))
+    }
+
+    /// `SpeechTranscriber.installedLocales` is the only reliable readiness signal.
+    /// `AssetInventory.status(forModules:)` reports `.supported` even for the
+    /// already-installed zh-CN (it also factors in locale *reservation*), so using
+    /// it here would send every language down the legacy path.
+    @available(macOS 26.0, *)
+    private static func isAssetInstalled(for locale: Locale) async -> Bool {
+        let target = locale.identifier(.bcp47)
+        return await SpeechTranscriber.installedLocales
+            .contains { $0.identifier(.bcp47) == target }
+    }
+
+    /// Kicks off the (hundreds-of-MB) asset download once per locale per launch and
+    /// returns immediately — a press-to-talk turn must never block on a download.
+    /// Also reserves the locale so the system doesn't purge the asset afterwards.
+    @available(macOS 26.0, *)
+    private static func requestAssetInstall(for locale: Locale, localeID: String) {
+        assetLock.lock()
+        let alreadyStarted = !assetInstallsStarted.insert(localeID).inserted
+        assetLock.unlock()
+        guard !alreadyStarted else { return }
+
+        Task.detached {
+            do {
+                let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
+                if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                    NSLog("[AppleASREngine] Downloading SpeechTranscriber asset for %@ …", localeID)
+                    try await request.downloadAndInstall()
+                    NSLog("[AppleASREngine] SpeechTranscriber asset for %@ installed.", localeID)
+                }
+                try await AssetInventory.reserve(locale: locale)
+            } catch {
+                // Keep the flag set — retrying on every recording would hammer the
+                // network. Legacy recognition keeps working in the meantime.
+                NSLog("[AppleASREngine] SpeechTranscriber asset install for %@ failed: %@", localeID, error.localizedDescription)
+            }
+        }
     }
 
     /// Apple's recognizer punctuates *within* an utterance but routinely omits
