@@ -626,6 +626,7 @@ final class VoiceService: ObservableObject, VoiceServiceProtocol {
         audioController.tapFireCount = 0
         audioController.hasReceivedRealAudio = false  // gate that skips Bluetooth SCO warm-up zeros
         audioController.streamingPeak = 0
+        audioController.lockedInputChannel = nil  // 输入格式可能在两次录音之间变（通话开始/结束会切 VPIO）
         audioController.audioRecoveryAttempted = false
         isStartingEngine = true
 

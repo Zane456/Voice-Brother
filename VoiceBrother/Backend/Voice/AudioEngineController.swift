@@ -93,14 +93,30 @@ final class AudioEngineController {
     /// silence-hallucination filter.
     var hasReceivedRealAudio = false
 
-    /// Energy threshold (RMS on the raw buffer) below which we treat the buffer
-    /// as "still warming up" and don't yet flip `hasReceivedRealAudio`. Tuned low
-    /// (0.001) so it ONLY rejects the truly-zero buffers AirPods emits during
-    /// SCO link establishment — production logs show those as RMS = 0.0 exactly.
-    /// Anything above this — including very quiet whispers and ambient room
-    /// noise — passes through, so we never chop the leading characters of
-    /// soft-spoken input.
-    private let leadingSilenceRMSThreshold: Float = 0.001
+    /// Which input channel the current recording reads from, once decided.
+    /// nil = 尚未选定（每个 buffer 继续挑最强通道，直到听见真实信号才锁）。
+    /// 见 tap 内的选道逻辑：本机三种输入格式（1 / 3 / 9 ch）语义各不相同，
+    /// 靠能量挑而不是靠固定下标。整段录音锁定，避免逐 buffer 在通道间跳变。
+    var lockedInputChannel: Int?
+
+    /// 选道锁定门槛。低于它认为还没听见真实信号，不锁，下个 buffer 重挑 ——
+    /// 否则会在纯静音里锁到噪声最大的那一路。取值低于原生阵列模式下的语音
+    /// RMS（≈ 0.0014），高于纯零。
+    private let channelLockRMSThreshold: Float = 0.0005
+
+    /// Energy threshold (RMS on the downmixed buffer) below which we treat the
+    /// buffer as "still warming up" and don't yet flip `hasReceivedRealAudio`.
+    /// The only thing this must reject is the truly-zero buffers AirPods emits
+    /// during SCO link establishment — production logs show those as RMS = 0.0
+    /// exactly, so a floor just above zero is all that's needed.
+    ///
+    /// 曾设为 0.001，是个隐藏的设备耦合：那个值只在 VPIO 单声道模式下安全（该模式
+    /// 有自动增益，语音 RMS ≈ 0.012–0.017，余量 10 倍以上）。一旦没有 app 持有
+    /// VPIO，内建麦回到原生多通道格式、无自动增益，语音 RMS 掉到 ≈ 0.0014 —— 与
+    /// 0.001 只差 1.4 倍，安静句段整段被判成"还没开始说话"而丢弃，最终 chunks=0，
+    /// 用户看到的却是"麦克风无输入，可能被其他 app 占用"（实测 tapFired=17，麦克风
+    /// 根本没被占用）。阈值不该承担增益判断，只挡纯零。
+    private let leadingSilenceRMSThreshold: Float = 1e-6
 
     /// Running peak used to drive a streaming-AGC view of the waveform. Mirrors
     /// the batch AGC in `transcribeAndInject` (which scales the whole utterance
@@ -223,14 +239,66 @@ final class AudioEngineController {
             self.incrementTapFireCount()
             guard self.voice?.isRecording ?? false else { return }
 
-            // Compute RMS audio level from raw buffer for waveform animation + leading-silence detection
+            // 先把多通道收成单声道，后面的 RMS / AGC / 采样率转换全部基于它。
+            // 本机实测存在三种输入格式，通道语义互不相同：
+            //   · 1 ch —— 直接用。
+            //   · 3 ch —— 内建三麦阵列的原生格式（无人持 VPIO 时的真实硬件格式）。
+            //     三个独立物理麦，ch0 未必是主麦。
+            //   · 9 ch —— 别的 app 持有 VPIO 时系统给出的格式（实测微信通话）。
+            //     其中只有一路是处理后的语音，其余是回采参考 / 原始麦 / 静默通道。
+            // 所以既不能写死 ch0（3 ch 阵列下可能选中弱麦），也不能求平均（9 ch VPIO
+            // 下会把主通道摊薄 9 倍，还会把回采的对方声音混进来）。按能量挑最强的
+            // 一路对三种格式都成立，且不稀释任何一种。
+            // 锁定的原因：逐 buffer 重挑会在通道间跳变（各路电平/相位不同）造成波形
+            // 不连续，所以只在第一个听得见真实信号的 buffer 上决定一次。
+            guard buffer.frameLength > 0, let srcChannels = buffer.floatChannelData else { return }
+            let frameLength = Int(buffer.frameLength)
+            let channelCount = Int(buffer.format.channelCount)
+            guard let monoBuffer = AVAudioPCMBuffer(
+                pcmFormat: monoSourceFormat,
+                frameCapacity: buffer.frameLength
+            ) else {
+                DebugLog.write("[VoiceService] Audio tap: FAILED to allocate mono buffer")
+                return
+            }
+            monoBuffer.frameLength = buffer.frameLength
+            let monoSamples = monoBuffer.floatChannelData![0]
+
+            let sourceChannel: Int
+            if channelCount <= 1 {
+                sourceChannel = 0
+            } else if let locked = self.lockedInputChannel {
+                sourceChannel = locked
+            } else {
+                var perChannelRMS = [Float](repeating: 0, count: channelCount)
+                var best = 0
+                for c in 0..<channelCount {
+                    let p = srcChannels[c]
+                    var sum: Float = 0
+                    for i in 0..<frameLength { sum += p[i] * p[i] }
+                    perChannelRMS[c] = sqrtf(sum / Float(max(frameLength, 1)))
+                    if perChannelRMS[c] > perChannelRMS[best] { best = c }
+                }
+                sourceChannel = best
+                if perChannelRMS[best] > self.channelLockRMSThreshold {
+                    self.lockedInputChannel = best
+                    // 这行是通道语义的唯一实证来源 —— 每种格式各留一条即可看出
+                    // 哪一路是语音、哪些是参考/静默。排查通话场景先看它。
+                    let profile = perChannelRMS.enumerated()
+                        .map { "ch\($0.offset)=\(String(format: "%.4f", $0.element))" }
+                        .joined(separator: " ")
+                    DebugLog.write("[VoiceService] Input channel locked: ch\(best) of \(channelCount) — \(profile)")
+                }
+            }
+            memcpy(monoSamples, srcChannels[sourceChannel], frameLength * MemoryLayout<Float>.size)
+
+            // Compute RMS audio level from the downmixed buffer for waveform animation + leading-silence detection
             var rawRMS: Float = 0
-            if let channelData = buffer.floatChannelData?[0] {
-                let frameLength = Int(buffer.frameLength)
+            do {
                 var sum: Float = 0
                 var bufferPeak: Float = 0
                 for i in 0..<frameLength {
-                    let s = channelData[i]
+                    let s = monoSamples[i]
                     sum += s * s
                     let a = abs(s)
                     if a > bufferPeak { bufferPeak = a }
@@ -275,21 +343,7 @@ final class AudioEngineController {
                 self.hasReceivedRealAudio = true
             }
 
-            // VPIO 给的是多通道 buffer（各通道内容完全相同），先手动取 channel 0
-            // 拼成单声道 buffer，再交给转换器做 48k→16k 采样率转换。
-            guard buffer.frameLength > 0, let srcChannel = buffer.floatChannelData?[0] else { return }
-            guard let monoBuffer = AVAudioPCMBuffer(
-                pcmFormat: monoSourceFormat,
-                frameCapacity: buffer.frameLength
-            ) else {
-                DebugLog.write("[VoiceService] Audio tap: FAILED to allocate mono buffer")
-                return
-            }
-            monoBuffer.frameLength = buffer.frameLength
-            memcpy(monoBuffer.floatChannelData![0], srcChannel,
-                   Int(buffer.frameLength) * MemoryLayout<Float>.size)
-
-            // Convert to 16kHz mono Float32
+            // Convert to 16kHz mono Float32 (monoBuffer 已在本回调开头降混好)
             let frameCount = AVAudioFrameCount(Double(buffer.frameLength) * 16000.0 / format.sampleRate)
             // Skip empty buffers — allocating with capacity 1 would yield an
             // unusable buffer whose floatChannelData pointer can't be safely read.
